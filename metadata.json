@@ -1,0 +1,7 @@
+{
+  "name": "Lista de Compras Pro",
+  "description": "Uma versão moderna e escalável da sua lista de compras, mantendo o Google Sheets como banco de dados e rodando no Vercel.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
