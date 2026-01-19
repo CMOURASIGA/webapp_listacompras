@@ -1,55 +1,40 @@
+# Configuração do Lista de Compras Pro
 
-# Integração Vercel + Google Apps Script
+Para que o App funcione corretamente no Vercel, você precisa configurar duas variáveis principais.
 
-Para que o App no Vercel funcione com sua planilha real, siga estes passos:
+### 1. Criar o Google OAuth Client ID (Essencial para o Login)
+1. Acesse o [Google Cloud Console](https://console.cloud.google.com/).
+2. Crie um novo projeto ou selecione um existente.
+3. Vá em **APIs e Serviços** -> **Tela de consentimento OAuth**.
+   - Configure como "Externo".
+   - Adicione seu email de suporte e informações básicas.
+   - Na aba "Domínios autorizados", adicione `vercel.app`.
+4. Vá em **Credenciais** -> **Criar Credenciais** -> **ID do cliente OAuth**.
+   - Tipo de aplicativo: **Aplicativo da Web**.
+   - Nome: `Lista de Compras Vercel`.
+   - **Origens JavaScript autorizadas**: 
+     - `http://localhost:3000` (para teste local)
+     - `https://SEU-APP.vercel.app` (sua URL do Vercel)
+5. Copie o **ID do cliente** gerado.
 
-### 1. Preparar o Apps Script (Backend)
-No seu editor de script do Google (onde está o seu `code.gs`), você precisa garantir que o `doGet` consiga retornar JSON para o Vercel. Adicione/Modifique o início do seu `doGet`:
+### 2. Configurar Variáveis de Ambiente no Vercel
+No Dashboard do seu projeto no Vercel, vá em **Settings** -> **Environment Variables** e adicione:
+
+| Chave | Valor |
+| :--- | :--- |
+| `VITE_GOOGLE_CLIENT_ID` | O ID que você copiou no passo anterior |
+| `APPS_SCRIPT_URL` | A URL do seu script terminando em `/exec` |
+| `API_KEY` | Sua chave da API do Google Gemini (opcional, para sugestões) |
+
+### 3. Google Apps Script (doGet)
+Certifique-se de que seu script esteja publicado como **App da Web**, executando como **Você** e acessível por **Qualquer pessoa**.
 
 ```javascript
 function doGet(e) {
-  // Roteador para chamadas de API do Vercel
-  if (e.parameter.action) {
-    const action = e.parameter.action;
-    const payload = e.parameter.payload ? JSON.parse(e.parameter.payload) : null;
-    let result;
-
-    try {
-      switch(action) {
-        case 'listarItens': result = listarItens(); break;
-        case 'listarCategorias': result = listarCategorias(); break;
-        case 'adicionarItem': result = adicionarItem(payload.nome, payload.quantidade, payload.categoria, payload.precoEstimado); break;
-        case 'getUserEmail': result = Session.getActiveUser().getEmail(); break;
-        // ... adicione as outras funções conforme necessário
-      }
-      return ContentService.createTextOutput(JSON.stringify({data: result}))
-        .setMimeType(ContentService.MimeType.JSON);
-    } catch(err) {
-      return ContentService.createTextOutput(JSON.stringify({error: err.message}))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-  }
-
-  // Se não for uma chamada de API, retorna o HTML normal (opcional)
-  return HtmlService.createTemplateFromFile('Index').evaluate();
+  const action = e.parameter.action;
+  const userEmail = e.parameter.userEmail;
+  // Sua lógica aqui...
+  return ContentService.createTextOutput(JSON.stringify({data: resultado}))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 ```
-
-### 2. Publicar o Script
-1. Clique em **Implantar** -> **Nova Implantação**.
-2. Tipo: **App da Web**.
-3. Quem pode acessar: **Qualquer pessoa** (Isso é necessário para o Vercel conseguir "bater" na URL, mas os dados só serão lidos se o usuário estiver logado no Google).
-4. Copie a **URL do App da Web**.
-
-### 3. Configurar no Vercel
-1. Vá no dashboard do seu projeto no Vercel.
-2. Vá em **Settings** -> **Environment Variables**.
-3. Adicione uma nova variável:
-   - Key: `VITE_APPS_SCRIPT_URL`
-   - Value: `https://script.google.com/macros/s/SUA_URL_AQUI/exec`
-4. **Importante**: Faça um novo deploy ou clique em "Redeploy" para que o Vercel reconheça a nova variável.
-
-### 4. Como o sistema identifica sozinho?
-O arquivo `services/api.ts` lê automaticamente o valor de `import.meta.env.VITE_APPS_SCRIPT_URL`. 
-- Se a variável estiver vazia, ele pode falhar ou usar o modo demo.
-- Se estiver preenchida, cada clique em "Adicionar" ou "Finalizar" dispara um comando real para o seu Google Sheets.

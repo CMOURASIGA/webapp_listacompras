@@ -1,13 +1,11 @@
+/// <reference types="vite/client" />
 
 /**
- * Fix: Manually defining the ImportMeta interface to resolve the 'vite/client' type definition error.
- * This ensures that import.meta.env is correctly typed and recognized by the TypeScript compiler.
- * Fixed "Duplicate index signature" by removing redundant string index and "identical modifiers" by aligning with base types.
+ * Fix: Removed manual ImportMeta definition to avoid 'identical modifiers' conflict with vite/client.
+ * Added reference to vite/client for standard environment variable support and augmented ImportMetaEnv.
  */
 interface ImportMetaEnv {
-  VITE_APPS_SCRIPT_URL: string;
-}
-
-interface ImportMeta {
-  env: ImportMetaEnv;
+  readonly VITE_APPS_SCRIPT_URL: string;
+  readonly VITE_GOOGLE_CLIENT_ID: string;
+  readonly VITE_API_KEY: string;
 }

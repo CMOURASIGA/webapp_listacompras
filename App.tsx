@@ -29,27 +29,40 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
 };
 
 const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
+  const [hasClientId, setHasClientId] = useState(true);
+
   useEffect(() => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    
+    if (!clientId || clientId.includes("CLIENT_ID_AQUI")) {
+      setHasClientId(false);
+      return;
+    }
+
     /* global google */
-    // @ts-ignore
-    google.accounts.id.initialize({
-      client_id: "732049983942-0fpgrebuqit06v819d26s6psv093i3u8.apps.googleusercontent.com", // Client ID genérico para demonstração ou via env
-      callback: (response: any) => {
-        const payload = JSON.parse(atob(response.credential.split('.')[1]));
-        const user: UserSession = {
-          email: payload.email,
-          name: payload.name,
-          picture: payload.picture
-        };
-        localStorage.setItem('shopping_user', JSON.stringify(user));
-        onLogin(user);
-      }
-    });
-    // @ts-ignore
-    google.accounts.id.renderButton(
-      document.getElementById("googleBtn"),
-      { theme: "outline", size: "large", width: 280, text: "signin_with", shape: "pill" }
-    );
+    try {
+      // @ts-ignore
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (response: any) => {
+          const payload = JSON.parse(atob(response.credential.split('.')[1]));
+          const user: UserSession = {
+            email: payload.email,
+            name: payload.name,
+            picture: payload.picture
+          };
+          localStorage.setItem('shopping_user', JSON.stringify(user));
+          onLogin(user);
+        }
+      });
+      // @ts-ignore
+      google.accounts.id.renderButton(
+        document.getElementById("googleBtn"),
+        { theme: "outline", size: "large", width: 280, text: "signin_with", shape: "pill" }
+      );
+    } catch (e) {
+      console.error("Erro ao inicializar Google Auth:", e);
+    }
   }, [onLogin]);
 
   return (
@@ -61,7 +74,14 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
         <h1 className="text-3xl font-black text-gray-900 mb-2">Bem-vindo!</h1>
         <p className="text-gray-500 mb-10 font-medium">Sua lista de compras inteligente e compartilhada.</p>
         
-        <div className="flex justify-center mb-8" id="googleBtn"></div>
+        {hasClientId ? (
+          <div className="flex justify-center mb-8" id="googleBtn"></div>
+        ) : (
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl mb-8">
+            <p className="text-amber-800 text-xs font-bold uppercase mb-2">Configuração Necessária</p>
+            <p className="text-amber-700 text-sm">Você precisa configurar o <b>VITE_GOOGLE_CLIENT_ID</b> no Vercel para habilitar o login.</p>
+          </div>
+        )}
         
         <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">
           Dados salvos com segurança no Google Sheets
@@ -70,20 +90,6 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
     </div>
   );
 };
-
-const ConfigErrorScreen = () => (
-  <div className="min-h-screen flex items-center justify-center p-6 bg-red-50">
-    <div className="bg-white p-8 rounded-[2.5rem] shadow-xl w-full max-w-md text-center border-2 border-red-100">
-      <div className="text-5xl mb-6">⚠️</div>
-      <h1 className="text-2xl font-bold text-red-600 mb-4">Configuração Pendente</h1>
-      <p className="text-gray-600 mb-6 text-sm">A URL do seu Google Apps Script não foi encontrada nas variáveis de ambiente do Vercel.</p>
-      <div className="bg-gray-50 p-4 rounded-2xl text-left text-xs font-mono text-gray-500 break-all mb-6">
-        Variável: APPS_SCRIPT_URL
-      </div>
-      <p className="text-gray-400 text-xs italic">Verifique o README para saber como configurar.</p>
-    </div>
-  </div>
-);
 
 // --- Main App ---
 

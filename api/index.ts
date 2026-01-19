@@ -31,10 +31,12 @@ export default async function handler(req: Request) {
 
   // IA Sugestões
   if (action === 'getSmartSuggestions') {
-    if (!API_KEY) return jsonResponse({ error: "IA indisponível (falta API_KEY)." }, 500);
+    // Check for API key presence using process.env directly
+    if (!process.env.API_KEY) return jsonResponse({ error: "IA indisponível (falta API_KEY)." }, 500);
     try {
       const payload = payloadStr ? JSON.parse(payloadStr) : { items: [], categories: [] };
-      const ai = new GoogleGenAI({ apiKey: API_KEY });
+      // Always initialize GoogleGenAI with process.env.API_KEY directly
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const currentItems = payload.items.map((i: any) => i.nome).join(", ");
       
       const response = await ai.models.generateContent({
@@ -42,7 +44,7 @@ export default async function handler(req: Request) {
         contents: `Sugira 5 itens de compras (nomes curtos) que faltam para quem já tem: [${currentItems || 'nada'}]. Responda apenas os nomes separados por vírgula.`,
       });
 
-      // Correção do erro TS18048: garantindo que text não seja undefined antes de usar split
+      // Access the .text property directly from the response object
       const generatedText = response.text || "";
       const suggestions = generatedText.split(',')
         .map(s => s.trim())
