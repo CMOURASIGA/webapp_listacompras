@@ -1,41 +1,55 @@
 
-# Lista de Compras Pro (Vercel + Google Sheets)
+# Integração Vercel + Google Apps Script
 
-Este documento explica como conectar o WebApp rodando no Vercel à sua planilha Google Sheets existente, sem alterar uma única célula da sua estrutura atual.
+Para que o App no Vercel funcione com sua planilha real, siga estes passos:
 
-## Como a conexão é feita (O "Pulo do Gato")
+### 1. Preparar o Apps Script (Backend)
+No seu editor de script do Google (onde está o seu `code.gs`), você precisa garantir que o `doGet` consiga retornar JSON para o Vercel. Adicione/Modifique o início do seu `doGet`:
 
-Diferente do Apps Script, o Vercel acessa sua planilha via **API**. O fluxo é:
+```javascript
+function doGet(e) {
+  // Roteador para chamadas de API do Vercel
+  if (e.parameter.action) {
+    const action = e.parameter.action;
+    const payload = e.parameter.payload ? JSON.parse(e.parameter.payload) : null;
+    let result;
 
-1.  **Service Account**: O backend do Vercel se identifica como um "membro da equipe" (um robô).
-2.  **Compartilhamento**: Você compartilha sua planilha com o e-mail desse robô (ex: `shopping-bot@projeto.iam.gserviceaccount.com`) como Editor.
-3.  **Identificação**: O ID da sua planilha (encontrado na URL) é configurado nas variáveis de ambiente do Vercel.
+    try {
+      switch(action) {
+        case 'listarItens': result = listarItens(); break;
+        case 'listarCategorias': result = listarCategorias(); break;
+        case 'adicionarItem': result = adicionarItem(payload.nome, payload.quantidade, payload.categoria, payload.precoEstimado); break;
+        case 'getUserEmail': result = Session.getActiveUser().getEmail(); break;
+        // ... adicione as outras funções conforme necessário
+      }
+      return ContentService.createTextOutput(JSON.stringify({data: result}))
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch(err) {
+      return ContentService.createTextOutput(JSON.stringify({error: err.message}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
 
-## Passo a Passo para Conectar sua Planilha Hoje
+  // Se não for uma chamada de API, retorna o HTML normal (opcional)
+  return HtmlService.createTemplateFromFile('Index').evaluate();
+}
+```
 
-### 1. Preparar o Google Cloud
-- Crie um projeto no [Google Cloud Console](https://console.cloud.google.com/).
-- Ative a **Google Sheets API**.
-- Vá em `Credenciais` -> `Criar Credenciais` -> `Conta de Serviço`.
-- Após criar, clique na conta, vá em `Chaves` -> `Adicionar Chave` -> `Criar nova chave (JSON)`. **Guarde este arquivo.**
+### 2. Publicar o Script
+1. Clique em **Implantar** -> **Nova Implantação**.
+2. Tipo: **App da Web**.
+3. Quem pode acessar: **Qualquer pessoa** (Isso é necessário para o Vercel conseguir "bater" na URL, mas os dados só serão lidos se o usuário estiver logado no Google).
+4. Copie a **URL do App da Web**.
 
-### 2. Dar Acesso ao App
-- Abra sua planilha de compras atual.
-- Clique em **Compartilhar**.
-- Cole o e-mail da Conta de Serviço que você criou (está no JSON que você baixou).
-- Dê permissão de **Editor** e desmarque "Notificar pessoas".
+### 3. Configurar no Vercel
+1. Vá no dashboard do seu projeto no Vercel.
+2. Vá em **Settings** -> **Environment Variables**.
+3. Adicione uma nova variável:
+   - Key: `VITE_APPS_SCRIPT_URL`
+   - Value: `https://script.google.com/macros/s/SUA_URL_AQUI/exec`
+4. **Importante**: Faça um novo deploy ou clique em "Redeploy" para que o Vercel reconheça a nova variável.
 
-### 3. Configurar o Vercel
-No painel do seu projeto no Vercel, adicione as seguintes `Environment Variables`:
-
-- `GOOGLE_SHEET_ID`: O ID da sua planilha (ex: `1abc123...`).
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL`: O e-mail do robô.
-- `GOOGLE_PRIVATE_KEY`: A chave privada que está dentro do arquivo JSON.
-- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`: Obtidos no console do Google para permitir o Login Social dos usuários (seu e-mail e de quem você compartilha).
-
-## Por que a estrutura não muda?
-O código do backend (Vercel API Routes) utiliza mapeadores que respeitam a ordem das suas colunas:
-- Se sua aba de itens tem o nome `Items`, o código buscará por `Items`.
-- Se a coluna `C` é a `Quantidade`, o código lerá a `coluna index 2`.
-
-Isso garante que você pode até continuar abrindo a planilha manualmente e o app continuará funcionando em sincronia perfeita.
+### 4. Como o sistema identifica sozinho?
+O arquivo `services/api.ts` lê automaticamente o valor de `import.meta.env.VITE_APPS_SCRIPT_URL`. 
+- Se a variável estiver vazia, ele pode falhar ou usar o modo demo.
+- Se estiver preenchida, cada clique em "Adicionar" ou "Finalizar" dispara um comando real para o seu Google Sheets.
