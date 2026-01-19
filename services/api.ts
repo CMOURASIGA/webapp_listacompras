@@ -1,72 +1,47 @@
-
 import { ShoppingItem, Category, PurchaseGroup, DashboardStats } from '../types';
-import { GoogleGenAI } from "@google/genai";
 
 /**
- * SERVIÇO DE COMUNICAÇÃO REAL (VERCEL -> APPS SCRIPT)
- * Este serviço consome a URL definida na variável de ambiente VITE_APPS_SCRIPT_URL.
+ * SERVIÇO DE COMUNICAÇÃO (REACT -> VERCEL BACKEND)
+ * Todas as chamadas passam pelo proxy local em /api para evitar CORS e ocultar chaves.
  */
 
-// Fix: Utiliza a interface global ImportMetaEnv agora definida em vite-env.d.ts
-const getEnvVariable = (key: string): string | undefined => {
-  try {
-    return (import.meta.env as any)[key];
-  } catch (e) {
-    return undefined;
-  }
-};
-
-const SCRIPT_URL = getEnvVariable('VITE_APPS_SCRIPT_URL');
-
-async function callScript(action: string, data: any = null) {
-  if (typeof SCRIPT_URL !== 'string' || !SCRIPT_URL) {
-    console.warn("VITE_APPS_SCRIPT_URL não definida ou inválida. Verifique as variáveis de ambiente no Vercel.");
-    return null;
-  }
-
-  const url = new URL(SCRIPT_URL);
+async function callBackend(action: string, data: any = null) {
+  const url = new URL('/api', window.location.origin);
   url.searchParams.set('action', action);
   
-  const options: RequestInit = {
-    method: 'GET',
-    mode: 'cors',
-  };
-
   if (data) {
     url.searchParams.set('payload', JSON.stringify(data));
   }
 
   try {
-    const response = await fetch(url.toString(), options);
-    const result = await response.json();
-    if (result.error) throw new Error(result.error);
-    return result.data;
-  } catch (error) {
+    const response = await fetch(url.toString());
+    const contentType = response.headers.get('content-type');
+
+    if (contentType && contentType.includes('application/json')) {
+      const result = await response.json();
+      if (!response.ok) {
+        const errorMsg = result.details 
+          ? `${result.error} \n\nDetalhes: ${result.details}`
+          : (result.error || `Erro do Servidor (${response.status})`);
+        throw new Error(errorMsg);
+      }
+      return result.data !== undefined ? result.data : result;
+    } else {
+      const text = await response.text();
+      console.error(`Erro: Recebido conteúdo inesperado para '${action}':`, text.substring(0, 200));
+      throw new Error(`O servidor retornou um formato inválido (HTML). Verifique se a URL do Google Apps Script nas variáveis de ambiente do Vercel termina em '/exec' e está publicada corretamente.`);
+    }
+  } catch (error: any) {
     console.error(`Erro na ação ${action}:`, error);
     throw error;
   }
 }
 
 class ShoppingAPI {
-  /**
-   * Fix: Integração com Gemini API para sugerir itens inteligentes baseados no contexto da lista.
-   * Following the @google/genai guidelines: initialization with process.env.API_KEY directly.
-   */
   async getSmartSuggestions(items: ShoppingItem[], categories: Category[]): Promise<string[]> {
     try {
-      // Fix: Create new GoogleGenAI instance using process.env.API_KEY as required.
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const currentItems = items.map(i => i.nome).join(", ");
-      const categoryNames = categories.map(c => c.nome).join(", ");
-      
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Com base na minha lista de compras atual: [${currentItems || 'vazia'}], sugira 5 itens adicionais comuns que podem estar faltando. Considere estas categorias: [${categoryNames}]. Responda apenas com os nomes dos itens separados por vírgula, sem explicações.`,
-      });
-
-      const text = response.text || "";
-      // Fix: Adicionada tipagem explícita para os parâmetros do map e filter (s: string)
-      return text.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0 && s !== 'vazia');
+      const suggestions = await callBackend('getSmartSuggestions', { items, categories });
+      return suggestions || [];
     } catch (error) {
       console.error("Erro ao obter sugestões de IA:", error);
       return [];
@@ -75,65 +50,77 @@ class ShoppingAPI {
 
   async getMe() {
     try {
-      const email = await callScript('getUserEmail');
+      const email = await callBackend('getUserEmail');
       return { 
         email: email || 'usuario@google.com', 
         name: email ? email.split('@')[0] : 'Usuário', 
         picture: `https://ui-avatars.com/api/?name=${email || 'User'}&background=3b82f6&color=fff` 
       };
     } catch (e) {
-      return { email: 'erro@api.com', name: 'Erro', picture: '' };
+      return { email: 'convidado@google.com', name: 'Convidado', picture: 'https://ui-avatars.com/api/?name=C&background=ccc' };
     }
   }
 
   async getCategories(): Promise<Category[]> {
-    const cats = await callScript('listarCategorias');
-    return cats || [];
+    try {
+      const cats = await callBackend('listarCategorias');
+      return Array.isArray(cats) ? cats : [];
+    } catch (e) {
+      return [];
+    }
   }
 
   async getItems(): Promise<ShoppingItem[]> {
-    const items = await callScript('listarItens');
-    return items || [];
+    try {
+      const items = await callBackend('listarItens');
+      return Array.isArray(items) ? items : [];
+    } catch (e) {
+      return [];
+    }
   }
 
   async addItem(item: Omit<ShoppingItem, 'id' | 'status' | 'dataAdicao'>): Promise<ShoppingItem> {
-    return await callScript('adicionarItem', item);
+    return await callBackend('adicionarItem', item);
   }
 
   async updateItem(id: string | number, updates: Partial<ShoppingItem>): Promise<void> {
-    await callScript('editarItem', { id, ...updates });
+    await callBackend('editarItem', { id, ...updates });
   }
 
   async removeItem(id: string | number): Promise<void> {
-    await callScript('removerItem', { id });
+    await callBackend('removerItem', { id });
   }
 
   async toggleStatus(id: string | number): Promise<void> {
-    await callScript('marcarComoComprado', { id });
+    await callBackend('marcarComoComprado', { id });
   }
 
   async finalizePurchase(): Promise<void> {
-    await callScript('finalizarCompra');
+    await callBackend('finalizarCompra');
   }
 
   async getHistory(): Promise<{ compras: PurchaseGroup[], stats: DashboardStats }> {
-    const data = await callScript('obterHistorico');
-    if (!data) return { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
-    
-    return {
-      compras: data.compras || [],
-      stats: {
-        totalGasto: parseFloat(data.estatisticas?.totalGasto || 0),
-        totalCompras: data.estatisticas?.totalCompras || 0,
-        totalItens: data.estatisticas?.totalItens || 0,
-        gastoMedio: parseFloat(data.estatisticas?.gastoMedio || 0),
-        categoriaFavorita: data.estatisticas?.categoriaFavorita || ''
-      }
-    };
+    try {
+      const data = await callBackend('obterHistorico');
+      if (!data) return { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
+      
+      return {
+        compras: data.compras || [],
+        stats: {
+          totalGasto: parseFloat(data.estatisticas?.totalGasto || 0),
+          totalCompras: data.estatisticas?.totalCompras || 0,
+          totalItens: data.estatisticas?.totalItens || 0,
+          gastoMedio: parseFloat(data.estatisticas?.gastoMedio || 0),
+          categoriaFavorita: data.estatisticas?.categoriaFavorita || ''
+        }
+      };
+    } catch (e) {
+      return { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
+    }
   }
 
   async reloadList(purchaseId: string | number): Promise<void> {
-    await callScript('carregarListaDoHistorico', { idCompra: purchaseId });
+    await callBackend('carregarListaDoHistorico', { idCompra: purchaseId });
   }
 }
 
