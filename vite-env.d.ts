@@ -10,5 +10,6 @@ interface ImportMetaEnv {
 }
 
 interface ImportMeta {
-  readonly env: ImportMetaEnv;
+  // Fix: Removed readonly to ensure all declarations of 'env' have identical modifiers.
+  env: ImportMetaEnv;
 }

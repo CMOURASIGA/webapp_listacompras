@@ -10,7 +10,6 @@ export default async function handler(req: Request) {
   const payloadStr = url.searchParams.get('payload');
   const userEmail = url.searchParams.get('userEmail');
   
-  // Suporta tanto APPS_SCRIPT_URL quanto VITE_APPS_SCRIPT_URL para facilitar o deploy
   const SCRIPT_URL_RAW = process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL;
 
   const jsonResponse = (data: any, status = 200) => new Response(JSON.stringify(data), {
@@ -24,7 +23,7 @@ export default async function handler(req: Request) {
   if (!SCRIPT_URL_RAW) {
     return jsonResponse({ 
       error: "Variável APPS_SCRIPT_URL não configurada no Vercel.",
-      details: "Vá em Settings -> Environment Variables e adicione a URL do seu script terminando em /exec."
+      details: "Vá em Settings -> Environment Variables e adicione a URL do seu script."
     }, 500);
   }
 
@@ -74,29 +73,35 @@ export default async function handler(req: Request) {
     const text = await response.text();
     const contentType = response.headers.get('content-type') || '';
 
-    // Se o Google retornar 404 ou uma página HTML (erro de permissão ou URL errada)
+    // Detecção inteligente de erros do Google
     if (response.status === 404 || contentType.includes('text/html')) {
-      console.error("GAS Proxy Error (HTML/404):", text.substring(0, 200));
-      return jsonResponse({ 
-        error: `O Google Apps Script retornou um erro (${response.status}).`,
-        details: `Verifique se a URL em Vercel termina em '/exec'. A URL que tentamos chamar foi: ${fullTargetUrl.split('?')[0]}`,
-        hint: "O script deve ser implantado como 'App da Web' com acesso para 'Qualquer Pessoa'."
-      }, 500);
+      const isExecMissing = !sanitizedUrl.toLowerCase().endsWith('/exec');
+      
+      if (isExecMissing) {
+        return jsonResponse({ 
+          error: "URL do Script Inválida",
+          details: "A URL configurada no Vercel NÃO termina em '/exec'. Por favor, atualize a variável APPS_SCRIPT_URL."
+        }, 500);
+      } else {
+        return jsonResponse({ 
+          error: "Erro de Permissão no Google",
+          details: "A URL está correta, mas o Google retornou HTML (página de erro/login).",
+          hint: "No Google Apps Script, vá em 'Implantar' -> 'Gerenciar Implantações' -> Edite a implantação atual e certifique-se de que 'Quem tem acesso' está definido como 'Qualquer pessoa' (Anyone)."
+        }, 500);
+      }
     }
 
     try {
       return jsonResponse(JSON.parse(text));
     } catch (e) {
-      console.error("GAS Invalid JSON:", text.substring(0, 200));
       return jsonResponse({ 
-        error: "Resposta do Google Apps Script não é um JSON válido.", 
-        details: "O script deve retornar ContentService.MimeType.JSON",
-        preview: text.substring(0, 100) 
+        error: "Resposta Inválida", 
+        details: "O Google retornou algo que não é JSON. Verifique se o seu script usa ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON)"
       }, 500);
     }
   } catch (e: any) {
     return jsonResponse({ 
-      error: "Falha na conexão de rede com o Google.",
+      error: "Falha na Conexão",
       details: e.message 
     }, 500);
   }

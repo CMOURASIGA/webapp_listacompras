@@ -1,40 +1,35 @@
 # Configuração do Lista de Compras Pro
 
-Para que o App funcione corretamente no Vercel, você precisa configurar duas variáveis principais.
+Para que o App funcione corretamente no Vercel, você precisa configurar duas frentes.
 
-### 1. Criar o Google OAuth Client ID (Essencial para o Login)
-1. Acesse o [Google Cloud Console](https://console.cloud.google.com/).
-2. Crie um novo projeto ou selecione um existente.
-3. Vá em **APIs e Serviços** -> **Tela de consentimento OAuth**.
-   - Configure como "Externo".
-   - Adicione seu email de suporte e informações básicas.
-   - Na aba "Domínios autorizados", adicione `vercel.app`.
-4. Vá em **Credenciais** -> **Criar Credenciais** -> **ID do cliente OAuth**.
-   - Tipo de aplicativo: **Aplicativo da Web**.
-   - Nome: `Lista de Compras Vercel`.
-   - **Origens JavaScript autorizadas**: 
-     - `http://localhost:3000` (para teste local)
-     - `https://SEU-APP.vercel.app` (sua URL do Vercel)
-5. Copie o **ID do cliente** gerado.
+### 1. No Google Apps Script (CRUCIAL)
+O erro mais comum é a permissão de acesso.
+1. No seu editor de script, clique no botão azul **Implantar** (Deploy) -> **Nova implantação**.
+2. Selecione o tipo **App da Web**.
+3. Em **Executar como**, selecione **Eu** (sua conta).
+4. Em **Quem tem acesso**, selecione **Qualquer pessoa** (Anyone). 
+   - *Nota: Se você selecionar "Qualquer pessoa com conta Google", o app vai falhar porque o Vercel não consegue fazer login por você.*
+5. Clique em **Implantar** e copie a URL gerada (ela deve terminar em `/exec`).
 
 ### 2. Configurar Variáveis de Ambiente no Vercel
-No Dashboard do seu projeto no Vercel, vá em **Settings** -> **Environment Variables** e adicione:
+No Dashboard do seu projeto no Vercel, vá em **Settings** -> **Environment Variables**:
 
 | Chave | Valor |
 | :--- | :--- |
-| `VITE_GOOGLE_CLIENT_ID` | O ID que você copiou no passo anterior |
-| `APPS_SCRIPT_URL` | A URL do seu script terminando em `/exec` |
-| `API_KEY` | Sua chave da API do Google Gemini (opcional, para sugestões) |
+| `VITE_GOOGLE_CLIENT_ID` | O ID do OAuth Client (para o login funcionar) |
+| `APPS_SCRIPT_URL` | A URL que você copiou acima (terminando em `/exec`) |
+| `API_KEY` | Sua chave da API do Google Gemini (opcional, para sugestões de IA) |
 
-### 3. Google Apps Script (doGet)
-Certifique-se de que seu script esteja publicado como **App da Web**, executando como **Você** e acessível por **Qualquer pessoa**.
+### Exemplo de código do Script
+Certifique-se de que sua função `doGet` retorne JSON corretamente:
 
 ```javascript
 function doGet(e) {
   const action = e.parameter.action;
-  const userEmail = e.parameter.userEmail;
-  // Sua lógica aqui...
-  return ContentService.createTextOutput(JSON.stringify({data: resultado}))
+  // Lógica...
+  const data = { status: "sucesso", data: [] }; // exemplo
+  
+  return ContentService.createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }
 ```
