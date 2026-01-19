@@ -12,31 +12,23 @@ async function callBackend(action: string, data: any = null) {
     url.searchParams.set('payload', JSON.stringify(data));
   }
 
-  // Recupera o email do usuário do localStorage para autenticação no GAS
   const savedUser = localStorage.getItem('shopping_user');
   const user: UserSession | null = savedUser ? JSON.parse(savedUser) : null;
   
-  const headers: HeadersInit = {
-    'Accept': 'application/json'
-  };
-
   if (user?.email) {
-    url.searchParams.set('userEmail', user.email); // O GAS usará isso para validar permissões
+    url.searchParams.set('userEmail', user.email);
   }
 
   try {
-    const response = await fetch(url.toString(), { headers });
-    const contentType = response.headers.get('content-type');
-
-    if (contentType && contentType.includes('application/json')) {
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.details || result.error || `Erro (${response.status})`);
-      }
-      return result.data !== undefined ? result.data : result;
-    } else {
-      throw new Error(`Erro de Servidor: Ocorreu uma falha ao conectar com o Google Sheets. Verifique se o script está publicado como 'App da Web' para 'Qualquer pessoa'.`);
+    const response = await fetch(url.toString());
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.details || result.error || `Erro (${response.status})`);
     }
+    
+    // O script retorna os dados dentro de uma propriedade 'data'
+    return result.data;
   } catch (error: any) {
     console.error(`Erro na ação ${action}:`, error);
     throw error;
@@ -45,40 +37,18 @@ async function callBackend(action: string, data: any = null) {
 
 class ShoppingAPI {
   async getSmartSuggestions(items: ShoppingItem[], categories: Category[]): Promise<string[]> {
-    try {
-      const suggestions = await callBackend('getSmartSuggestions', { items, categories });
-      return suggestions || [];
-    } catch (error) {
-      console.error("Erro ao obter sugestões de IA:", error);
-      return [];
-    }
-  }
-
-  async getMe() {
-    // Agora o "me" é gerenciado no App.tsx via localStorage e Google Auth
-    const savedUser = localStorage.getItem('shopping_user');
-    return savedUser ? JSON.parse(savedUser) : null;
+    return await callBackend('getSmartSuggestions', { items, categories }) || [];
   }
 
   async getCategories(): Promise<Category[]> {
-    try {
-      const cats = await callBackend('listarCategorias');
-      return Array.isArray(cats) ? cats : [];
-    } catch (e) {
-      throw e;
-    }
+    return await callBackend('listarCategorias') || [];
   }
 
   async getItems(): Promise<ShoppingItem[]> {
-    try {
-      const items = await callBackend('listarItens');
-      return Array.isArray(items) ? items : [];
-    } catch (e) {
-      throw e;
-    }
+    return await callBackend('listarItens') || [];
   }
 
-  async addItem(item: Omit<ShoppingItem, 'id' | 'status' | 'dataAdicao'>): Promise<ShoppingItem> {
+  async addItem(item: Omit<ShoppingItem, 'id' | 'status' | 'dataAdicao'>): Promise<any> {
     return await callBackend('adicionarItem', item);
   }
 
@@ -99,23 +69,19 @@ class ShoppingAPI {
   }
 
   async getHistory(): Promise<{ compras: PurchaseGroup[], stats: DashboardStats }> {
-    try {
-      const data = await callBackend('obterHistorico');
-      if (!data) return { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
-      
-      return {
-        compras: data.compras || [],
-        stats: {
-          totalGasto: parseFloat(data.estatisticas?.totalGasto || 0),
-          totalCompras: data.estatisticas?.totalCompras || 0,
-          totalItens: data.estatisticas?.totalItens || 0,
-          gastoMedio: parseFloat(data.estatisticas?.gastoMedio || 0),
-          categoriaFavorita: data.estatisticas?.categoriaFavorita || ''
-        }
-      };
-    } catch (e) {
-      throw e;
-    }
+    const data = await callBackend('obterHistorico');
+    if (!data) return { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
+    
+    return {
+      compras: data.compras || [],
+      stats: {
+        totalGasto: parseFloat(data.estatisticas?.totalGasto || 0),
+        totalCompras: data.estatisticas?.totalCompras || 0,
+        totalItens: data.estatisticas?.totalItens || 0,
+        gastoMedio: parseFloat(data.estatisticas?.gastoMedio || 0),
+        categoriaFavorita: data.estatisticas?.categoriaFavorita || ''
+      }
+    };
   }
 
   async reloadList(purchaseId: string | number): Promise<void> {
