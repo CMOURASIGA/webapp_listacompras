@@ -1,8 +1,7 @@
-import { ShoppingItem, Category, PurchaseGroup, DashboardStats } from '../types';
+import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession } from '../types';
 
 /**
  * SERVIÇO DE COMUNICAÇÃO (REACT -> VERCEL BACKEND)
- * Todas as chamadas passam pelo proxy local em /api para evitar CORS e ocultar chaves.
  */
 
 async function callBackend(action: string, data: any = null) {
@@ -13,23 +12,30 @@ async function callBackend(action: string, data: any = null) {
     url.searchParams.set('payload', JSON.stringify(data));
   }
 
+  // Recupera o email do usuário do localStorage para autenticação no GAS
+  const savedUser = localStorage.getItem('shopping_user');
+  const user: UserSession | null = savedUser ? JSON.parse(savedUser) : null;
+  
+  const headers: HeadersInit = {
+    'Accept': 'application/json'
+  };
+
+  if (user?.email) {
+    url.searchParams.set('userEmail', user.email); // O GAS usará isso para validar permissões
+  }
+
   try {
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), { headers });
     const contentType = response.headers.get('content-type');
 
     if (contentType && contentType.includes('application/json')) {
       const result = await response.json();
       if (!response.ok) {
-        const errorMsg = result.details 
-          ? `${result.error} \n\nDetalhes: ${result.details}`
-          : (result.error || `Erro do Servidor (${response.status})`);
-        throw new Error(errorMsg);
+        throw new Error(result.details || result.error || `Erro (${response.status})`);
       }
       return result.data !== undefined ? result.data : result;
     } else {
-      const text = await response.text();
-      console.error(`Erro: Recebido conteúdo inesperado para '${action}':`, text.substring(0, 200));
-      throw new Error(`O servidor retornou um formato inválido (HTML). Verifique se a URL do Google Apps Script nas variáveis de ambiente do Vercel termina em '/exec' e está publicada corretamente.`);
+      throw new Error(`Erro de Servidor: Ocorreu uma falha ao conectar com o Google Sheets. Verifique se o script está publicado como 'App da Web' para 'Qualquer pessoa'.`);
     }
   } catch (error: any) {
     console.error(`Erro na ação ${action}:`, error);
@@ -49,16 +55,9 @@ class ShoppingAPI {
   }
 
   async getMe() {
-    try {
-      const email = await callBackend('getUserEmail');
-      return { 
-        email: email || 'usuario@google.com', 
-        name: email ? email.split('@')[0] : 'Usuário', 
-        picture: `https://ui-avatars.com/api/?name=${email || 'User'}&background=3b82f6&color=fff` 
-      };
-    } catch (e) {
-      return { email: 'convidado@google.com', name: 'Convidado', picture: 'https://ui-avatars.com/api/?name=C&background=ccc' };
-    }
+    // Agora o "me" é gerenciado no App.tsx via localStorage e Google Auth
+    const savedUser = localStorage.getItem('shopping_user');
+    return savedUser ? JSON.parse(savedUser) : null;
   }
 
   async getCategories(): Promise<Category[]> {
@@ -66,7 +65,7 @@ class ShoppingAPI {
       const cats = await callBackend('listarCategorias');
       return Array.isArray(cats) ? cats : [];
     } catch (e) {
-      return [];
+      throw e;
     }
   }
 
@@ -75,7 +74,7 @@ class ShoppingAPI {
       const items = await callBackend('listarItens');
       return Array.isArray(items) ? items : [];
     } catch (e) {
-      return [];
+      throw e;
     }
   }
 
@@ -115,7 +114,7 @@ class ShoppingAPI {
         }
       };
     } catch (e) {
-      return { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
+      throw e;
     }
   }
 
