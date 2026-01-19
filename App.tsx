@@ -40,6 +40,10 @@ export default function App() {
   const [user, setUser] = useState<UserSession | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
   
+  // Fix: Adição de estados para sugestões de IA
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
   // Filters
   const [catFilter, setCatFilter] = useState('todos');
 
@@ -174,6 +178,26 @@ export default function App() {
     }
   };
 
+  // Fix: Handler para sugestões inteligentes do Gemini
+  const handleGetSuggestions = async () => {
+    setLoadingSuggestions(true);
+    try {
+      const res = await api.getSmartSuggestions(items, categories);
+      setSuggestions(res);
+      if (res.length === 0) showToast('Nenhuma sugestão encontrada', 'info');
+    } catch (e) {
+      showToast('Erro ao obter sugestões', 'error');
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const handleAddSuggestion = (name: string) => {
+    setNewItemName(name);
+    setSuggestions(prev => prev.filter(s => s !== name));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   // Logic splits
   const pendingItems = items.filter(i => i.status === 'pendente' && (catFilter === 'todos' || i.categoria === catFilter));
   const boughtItems = items.filter(i => i.status === 'comprado');
@@ -277,6 +301,39 @@ export default function App() {
                    </button>
                 </div>
               </form>
+            </div>
+
+            {/* Smart Suggestions Section */}
+            <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-bold text-blue-800 flex items-center gap-2">
+                  <span className="text-lg">✨</span> Sugestões da IA
+                </h3>
+                <button 
+                  onClick={handleGetSuggestions}
+                  disabled={loadingSuggestions}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                >
+                  {loadingSuggestions ? 'Gerando...' : 'Ver sugestões'}
+                </button>
+              </div>
+              {suggestions.length > 0 && (
+                <div className="flex flex-wrap gap-2 animate-in fade-in slide-in-from-top-2">
+                  {suggestions.map((s, i) => (
+                    <button 
+                      key={i} 
+                      onClick={() => handleAddSuggestion(s)}
+                      className="bg-white px-3 py-1.5 rounded-lg border border-blue-200 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+                    >
+                      + {s}
+                    </button>
+                  ))}
+                  <button onClick={() => setSuggestions([])} className="text-[10px] text-gray-400 px-2">Remover</button>
+                </div>
+              )}
+              {suggestions.length === 0 && !loadingSuggestions && (
+                <p className="text-[10px] text-blue-400">Clique para ver itens sugeridos para sua lista.</p>
+              )}
             </div>
 
             {/* Cat Filter */}

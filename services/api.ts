@@ -1,18 +1,26 @@
 
 import { ShoppingItem, Category, PurchaseGroup, DashboardStats } from '../types';
+import { GoogleGenAI } from "@google/genai";
 
 /**
  * SERVIÇO DE COMUNICAÇÃO REAL (VERCEL -> APPS SCRIPT)
  * Este serviço consome a URL definida na variável de ambiente VITE_APPS_SCRIPT_URL.
  */
 
-const SCRIPT_URL = import.meta.env.VITE_APPS_SCRIPT_URL;
+// Fix: Utiliza a interface global ImportMetaEnv agora definida em vite-env.d.ts
+const getEnvVariable = (key: string): string | undefined => {
+  try {
+    return (import.meta.env as any)[key];
+  } catch (e) {
+    return undefined;
+  }
+};
+
+const SCRIPT_URL = getEnvVariable('VITE_APPS_SCRIPT_URL');
 
 async function callScript(action: string, data: any = null) {
-  // Fix: Ensure SCRIPT_URL is specifically a string and not empty to satisfy the URL constructor requirements.
-  // The original check 'if (!SCRIPT_URL)' allowed a 'true' boolean value to pass through, leading to a type error.
   if (typeof SCRIPT_URL !== 'string' || !SCRIPT_URL) {
-    console.warn("VITE_APPS_SCRIPT_URL não definida ou inválida. Usando modo de demonstração.");
+    console.warn("VITE_APPS_SCRIPT_URL não definida ou inválida. Verifique as variáveis de ambiente no Vercel.");
     return null;
   }
 
@@ -20,12 +28,11 @@ async function callScript(action: string, data: any = null) {
   url.searchParams.set('action', action);
   
   const options: RequestInit = {
-    method: 'GET', // Usamos GET com parâmetros para evitar problemas de CORS simples em redirecionamentos do Google
+    method: 'GET',
     mode: 'cors',
   };
 
   if (data) {
-    // Para simplificar e evitar pre-flight CORS complexo, passamos o payload como um parâmetro codificado
     url.searchParams.set('payload', JSON.stringify(data));
   }
 
@@ -41,14 +48,39 @@ async function callScript(action: string, data: any = null) {
 }
 
 class ShoppingAPI {
+  /**
+   * Fix: Integração com Gemini API para sugerir itens inteligentes baseados no contexto da lista.
+   */
+  async getSmartSuggestions(items: ShoppingItem[], categories: Category[]): Promise<string[]> {
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const currentItems = items.map(i => i.nome).join(", ");
+      const categoryNames = categories.map(c => c.nome).join(", ");
+      
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `Com base na minha lista de compras atual: [${currentItems || 'vazia'}], sugira 5 itens adicionais comuns que podem estar faltando. Considere estas categorias: [${categoryNames}]. Responda apenas com os nomes dos itens separados por vírgula, sem explicações.`,
+      });
+
+      const text = response.text || "";
+      return text.split(',').map(s => s.trim()).filter(s => s.length > 0 && s !== 'vazia');
+    } catch (error) {
+      console.error("Erro ao obter sugestões de IA:", error);
+      return [];
+    }
+  }
+
   async getMe() {
-    // Identificação do usuário via Google no Apps Script
-    const email = await callScript('getUserEmail');
-    return { 
-      email: email || 'usuario@google.com', 
-      name: email ? email.split('@')[0] : 'Usuário', 
-      picture: `https://ui-avatars.com/api/?name=${email}&background=3b82f6&color=fff` 
-    };
+    try {
+      const email = await callScript('getUserEmail');
+      return { 
+        email: email || 'usuario@google.com', 
+        name: email ? email.split('@')[0] : 'Usuário', 
+        picture: `https://ui-avatars.com/api/?name=${email || 'User'}&background=3b82f6&color=fff` 
+      };
+    } catch (e) {
+      return { email: 'erro@api.com', name: 'Erro', picture: '' };
+    }
   }
 
   async getCategories(): Promise<Category[]> {
@@ -74,7 +106,6 @@ class ShoppingAPI {
   }
 
   async toggleStatus(id: string | number): Promise<void> {
-    // Lógica baseada no seu code.gs (marcarComoComprado)
     await callScript('marcarComoComprado', { id });
   }
 
@@ -84,15 +115,16 @@ class ShoppingAPI {
 
   async getHistory(): Promise<{ compras: PurchaseGroup[], stats: DashboardStats }> {
     const data = await callScript('obterHistorico');
-    // Adaptamos o retorno do seu code.gs para o formato do App
+    if (!data) return { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
+    
     return {
       compras: data.compras || [],
       stats: {
-        totalGasto: parseFloat(data.estatisticas.totalGasto),
-        totalCompras: data.estatisticas.totalCompras,
-        totalItens: data.estatisticas.totalItens,
-        gastoMedio: parseFloat(data.estatisticas.gastoMedio),
-        categoriaFavorita: data.estatisticas.categoriaFavorita
+        totalGasto: parseFloat(data.estatisticas?.totalGasto || 0),
+        totalCompras: data.estatisticas?.totalCompras || 0,
+        totalItens: data.estatisticas?.totalItens || 0,
+        gastoMedio: parseFloat(data.estatisticas?.gastoMedio || 0),
+        categoriaFavorita: data.estatisticas?.categoriaFavorita || ''
       }
     };
   }
