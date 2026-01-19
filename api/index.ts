@@ -12,7 +12,6 @@ export default async function handler(req: Request) {
   
   // Suporta tanto APPS_SCRIPT_URL quanto VITE_APPS_SCRIPT_URL para facilitar o deploy
   const SCRIPT_URL_RAW = process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL;
-  const API_KEY = process.env.API_KEY;
 
   const jsonResponse = (data: any, status = 200) => new Response(JSON.stringify(data), {
     status,
@@ -31,11 +30,9 @@ export default async function handler(req: Request) {
 
   // IA Sugestões
   if (action === 'getSmartSuggestions') {
-    // Check for API key presence using process.env directly
     if (!process.env.API_KEY) return jsonResponse({ error: "IA indisponível (falta API_KEY)." }, 500);
     try {
       const payload = payloadStr ? JSON.parse(payloadStr) : { items: [], categories: [] };
-      // Always initialize GoogleGenAI with process.env.API_KEY directly
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const currentItems = payload.items.map((i: any) => i.nome).join(", ");
       
@@ -44,7 +41,6 @@ export default async function handler(req: Request) {
         contents: `Sugira 5 itens de compras (nomes curtos) que faltam para quem já tem: [${currentItems || 'nada'}]. Responda apenas os nomes separados por vírgula.`,
       });
 
-      // Access the .text property directly from the response object
       const generatedText = response.text || "";
       const suggestions = generatedText.split(',')
         .map(s => s.trim())
@@ -67,7 +63,9 @@ export default async function handler(req: Request) {
     if (payloadStr) targetUrl.searchParams.set('payload', payloadStr);
     if (userEmail) targetUrl.searchParams.set('userEmail', userEmail);
 
-    const response = await fetch(targetUrl.toString(), {
+    const fullTargetUrl = targetUrl.toString();
+
+    const response = await fetch(fullTargetUrl, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       redirect: 'follow'
@@ -81,8 +79,8 @@ export default async function handler(req: Request) {
       console.error("GAS Proxy Error (HTML/404):", text.substring(0, 200));
       return jsonResponse({ 
         error: `O Google Apps Script retornou um erro (${response.status}).`,
-        details: "Verifique se a URL termina em '/exec' e se o script foi implantado como 'Qualquer pessoa'.",
-        urlTentada: targetUrl.origin + targetUrl.pathname
+        details: `Verifique se a URL em Vercel termina em '/exec'. A URL que tentamos chamar foi: ${fullTargetUrl.split('?')[0]}`,
+        hint: "O script deve ser implantado como 'App da Web' com acesso para 'Qualquer Pessoa'."
       }, 500);
     }
 

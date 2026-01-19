@@ -32,7 +32,9 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
   const [hasClientId, setHasClientId] = useState(true);
 
   useEffect(() => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    // Proteção contra ambiente não configurado
+    const env = (import.meta as any).env || {};
+    const clientId = env.VITE_GOOGLE_CLIENT_ID;
     
     if (!clientId || clientId.includes("CLIENT_ID_AQUI")) {
       setHasClientId(false);
