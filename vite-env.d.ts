@@ -2,12 +2,12 @@
 /**
  * Fix: Manually defining the ImportMeta interface to resolve the 'vite/client' type definition error.
  * This ensures that import.meta.env is correctly typed and recognized by the TypeScript compiler.
+ * Fixed "Duplicate index signature" by removing redundant string index and "identical modifiers" by aligning with base types.
  */
 interface ImportMetaEnv {
-  readonly VITE_APPS_SCRIPT_URL: string;
-  readonly [key: string]: string | boolean | undefined;
+  VITE_APPS_SCRIPT_URL: string;
 }
 
 interface ImportMeta {
-  readonly env: ImportMetaEnv;
+  env: ImportMetaEnv;
 }

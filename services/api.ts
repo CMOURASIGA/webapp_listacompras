@@ -50,9 +50,11 @@ async function callScript(action: string, data: any = null) {
 class ShoppingAPI {
   /**
    * Fix: Integração com Gemini API para sugerir itens inteligentes baseados no contexto da lista.
+   * Following the @google/genai guidelines: initialization with process.env.API_KEY directly.
    */
   async getSmartSuggestions(items: ShoppingItem[], categories: Category[]): Promise<string[]> {
     try {
+      // Fix: Create new GoogleGenAI instance using process.env.API_KEY as required.
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const currentItems = items.map(i => i.nome).join(", ");
       const categoryNames = categories.map(c => c.nome).join(", ");
@@ -63,7 +65,8 @@ class ShoppingAPI {
       });
 
       const text = response.text || "";
-      return text.split(',').map(s => s.trim()).filter(s => s.length > 0 && s !== 'vazia');
+      // Fix: Adicionada tipagem explícita para os parâmetros do map e filter (s: string)
+      return text.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0 && s !== 'vazia');
     } catch (error) {
       console.error("Erro ao obter sugestões de IA:", error);
       return [];
