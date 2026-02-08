@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 
 export const config = {
@@ -27,39 +26,42 @@ export default async function handler(req: Request) {
 
   if (!SCRIPT_URL_RAW && action !== 'getSmartSuggestions') {
     return jsonResponse({ 
-      error: "URL Ausente",
-      details: "A URL do Apps Script não foi informada.",
-      hint: "Abra as configurações (engrenagem) e cole a URL de Implantação."
+      error: "Configuração Pendente",
+      details: "URL do Google Script não configurada.",
+      hint: "Abra o painel de configuração (engrenagem) e insira a URL de implantação."
     }, 500);
   }
 
+  // IA Sugestões
   if (action === 'getSmartSuggestions') {
-    if (!EFFECTIVE_API_KEY) return jsonResponse({ error: "Chave IA ausente." }, 500);
+    if (!EFFECTIVE_API_KEY) return jsonResponse({ error: "Gemini API Key não configurada." }, 500);
     try {
       const payload = payloadStr ? JSON.parse(payloadStr) : { items: [], categories: [] };
       const ai = new GoogleGenAI({ apiKey: EFFECTIVE_API_KEY });
       const currentItems = payload.items.map((i: any) => i.nome).join(", ");
+      
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Lista atual: [${currentItems}]. Sugira 5 itens. Apenas nomes separados por vírgula.`,
+        contents: `Sugira 5 itens de compras que faltam para quem já tem: [${currentItems || 'nada'}]. Responda apenas os nomes separados por vírgula.`,
       });
+
       const suggestions = (response.text || "").split(',').map(s => s.trim()).filter(s => s.length > 0);
       return jsonResponse({ data: suggestions });
     } catch (e: any) {
-      return jsonResponse({ error: "IA Offline", details: e.message }, 500);
+      return jsonResponse({ error: "Erro na IA", details: e.message }, 500);
     }
   }
 
+  // Proxy para Google Apps Script
   try {
     let sanitizedUrl = SCRIPT_URL_RAW!.trim();
-
-    // Verificação de URL de Desenvolvimento (/dev)
-    if (sanitizedUrl.endsWith('/dev')) {
-      return jsonResponse({
-        error: "URL de Teste Detectada (/dev)",
-        details: "URLs que terminam em /dev são privadas e não funcionam aqui.",
-        hint: "Clique em Implantar > Gerenciar Implantações e pegue a URL que termina em /exec."
-      }, 400);
+    
+    if (sanitizedUrl.includes('/edit')) {
+       return jsonResponse({ 
+          error: "URL de Editor Detectada",
+          details: "Você colou a URL da página de edição do código.",
+          hint: "Clique em 'Implantar' -> 'Nova Implantação' -> 'App da Web' e copie a URL que termina em /exec."
+        }, 400);
     }
 
     if (!sanitizedUrl.startsWith('http')) sanitizedUrl = 'https://' + sanitizedUrl;
@@ -78,12 +80,12 @@ export default async function handler(req: Request) {
     const text = await response.text();
     const contentType = response.headers.get('content-type') || '';
 
-    // Tratar o 404 específico do Google
+    // O erro 404 (robô do Google) significa que o ID do Script na URL não existe ou não está publicado
     if (response.status === 404 || contentType.includes('text/html')) {
        return jsonResponse({ 
-          error: "O Google retornou 404 (Não Encontrado)",
-          details: "A URL tem o formato correto, mas o 'ID do Script' dentro dela não existe ou a implantação foi deletada.",
-          hint: "1. No Google Scripts, clique em IMPLANTAR.\n2. Escolha GERENCIAR IMPLANTAÇÕES.\n3. Verifique se há um 'App da Web' ativo.\n4. Se não tiver, clique em 'Nova Implantação', tipo 'App da Web', acesso para 'Qualquer Pessoa'."
+          error: "Erro 404: WebApp não encontrado",
+          details: "O Google Scripts respondeu, mas disse que esta implantação não existe ou está inacessível.",
+          hint: "1. Vá no Apps Script. 2. 'Implantar' -> 'Gerenciar Implantações'. 3. Verifique se existe uma versão ativa. 4. Garanta que o acesso está definido como 'Qualquer Pessoa' (Anyone)."
         }, 500);
     }
 
@@ -92,12 +94,12 @@ export default async function handler(req: Request) {
       return jsonResponse(data);
     } catch (e) {
       return jsonResponse({ 
-        error: "Erro no Formato dos Dados", 
-        details: "O Google Scripts não respondeu um JSON válido. Verifique se você copiou o código Code.gs corretamente.",
-        raw: text.substring(0, 300)
+        error: "Resposta Inválida", 
+        details: "O script não retornou um JSON. Verifique se você publicou o código corretamente.",
+        raw: text.substring(0, 200)
       }, 500);
     }
   } catch (e: any) {
-    return jsonResponse({ error: "Erro de Conexão", details: e.message }, 500);
+    return jsonResponse({ error: "Falha na Conexão", details: e.message }, 500);
   }
 }

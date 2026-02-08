@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession } from './types';
 import { api } from './services/api';
@@ -54,15 +53,13 @@ const DiagnosticModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => 
   });
 
   const urlInput = manualVars.APPS_SCRIPT_URL.trim();
-  const isUrlEditor = urlInput.includes('/edit') || urlInput.includes('/u/0/');
-  const isUrlDev = urlInput.endsWith('/dev');
-  const isUrlValidFormat = urlInput.endsWith('/exec') && !isUrlEditor;
+  const isUrlValidFormat = urlInput.endsWith('/exec') && !urlInput.includes('/edit');
 
   const saveManualVars = () => {
     localStorage.setItem('DEBUG_APPS_SCRIPT_URL', manualVars.APPS_SCRIPT_URL.trim());
     localStorage.setItem('DEBUG_API_KEY', manualVars.API_KEY.trim());
     localStorage.setItem('DEBUG_CLIENT_ID', manualVars.CLIENT_ID.trim());
-    alert('Salvo! Agora clique em EXECUTAR TESTE para validar a conexão real.');
+    alert('Configurações salvas! Clique em "EXECUTAR TESTE" para validar.');
   };
 
   const runDiagnostic = async () => {
@@ -103,7 +100,7 @@ const DiagnosticModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => 
         <div className="p-8 border-b flex justify-between items-center bg-gray-50/80">
           <div>
             <h2 className="text-2xl font-black text-gray-900 tracking-tighter uppercase">Painel de Diagnóstico</h2>
-            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">Resolvendo o Erro 404</p>
+            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">Status da Conexão</p>
           </div>
           <button onClick={onClose} className="p-3 hover:bg-gray-200 rounded-full transition-all active:scale-90">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -112,62 +109,53 @@ const DiagnosticModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => 
         
         <div className="p-8 overflow-y-auto space-y-8 custom-scrollbar">
           <section className="space-y-4">
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2 tracking-widest">URL do Google Script (WebApp)</label>
-                <div className="relative">
-                  <input 
-                    type="text" 
-                    className={`w-full bg-gray-50 border ${isUrlEditor || isUrlDev ? 'border-red-500 bg-red-50' : 'border-gray-100'} p-4 rounded-2xl text-[11px] font-mono focus:ring-2 focus:ring-blue-500 outline-none transition-all pr-12`}
-                    placeholder="https://script.google.com/macros/s/.../exec"
-                    value={manualVars.APPS_SCRIPT_URL}
-                    onChange={e => setManualVars({...manualVars, APPS_SCRIPT_URL: e.target.value})}
-                  />
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                    {isUrlValidFormat ? <span className="text-green-500 text-xs font-black">FORMATO OK ✅</span> : <span className="text-red-500 text-xs font-black">INVÁLIDA ❌</span>}
-                  </div>
-                </div>
-
-                <div className="mt-4 p-4 bg-blue-50 border border-blue-100 rounded-2xl">
-                  <p className="text-[10px] font-black text-blue-800 uppercase mb-2">Checklist para evitar 404:</p>
-                  <ul className="text-[10px] space-y-1 text-blue-700 font-bold">
-                    <li>• A URL termina com <b className="text-blue-900">/exec</b>? (OK se verde acima)</li>
-                    <li>• Você clicou em <b className="text-blue-900">Implantar > Nova Implantação</b>?</li>
-                    <li>• Quem tem acesso: <b className="text-blue-900">Qualquer pessoa</b>? (Obrigatório)</li>
-                    <li>• Executar como: <b className="text-blue-900">Eu (seu email)</b>?</li>
-                  </ul>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2 tracking-widest">URL da Web App (/exec)</label>
+              <div className="relative">
+                <input 
+                  type="text" 
+                  className={`w-full bg-gray-50 border ${!isUrlValidFormat && urlInput ? 'border-red-500 bg-red-50' : 'border-gray-100'} p-4 rounded-2xl text-[11px] font-mono focus:ring-2 focus:ring-blue-500 outline-none transition-all pr-12`}
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                  value={manualVars.APPS_SCRIPT_URL}
+                  onChange={e => setManualVars({...manualVars, APPS_SCRIPT_URL: e.target.value})}
+                />
+                <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                  {isUrlValidFormat ? <span className="text-green-500 font-black">✔</span> : <span className="text-red-500 font-black">✘</span>}
                 </div>
               </div>
-              
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2">Gemini API Key</label>
-                  <input type="password" placeholder="AIza..." className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl text-xs font-mono" value={manualVars.API_KEY} onChange={e => setManualVars({...manualVars, API_KEY: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2">Google Client ID</label>
-                  <input type="text" placeholder="...apps.googleusercontent.com" className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl text-xs font-mono" value={manualVars.CLIENT_ID} onChange={e => setManualVars({...manualVars, CLIENT_ID: e.target.value})} />
-                </div>
-              </div>
-              
-              <button onClick={saveManualVars} className="w-full bg-black text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:scale-[1.02] active:scale-[0.98] transition-all">
-                Salvar Dados Locais
-              </button>
+              <p className="text-[10px] text-gray-400 mt-2 px-1">
+                Dica: Vá em <b>Implantar</b> {' > '} <b>Nova Implantação</b> {' > '} <b>App da Web</b> e copie a URL.
+              </p>
             </div>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2">Gemini API Key</label>
+                <input type="password" placeholder="AIza..." className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl text-xs font-mono" value={manualVars.API_KEY} onChange={e => setManualVars({...manualVars, API_KEY: e.target.value})} />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2">Google Client ID</label>
+                <input type="text" placeholder="...apps.googleusercontent.com" className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl text-xs font-mono" value={manualVars.CLIENT_ID} onChange={e => setManualVars({...manualVars, CLIENT_ID: e.target.value})} />
+              </div>
+            </div>
+            
+            <button onClick={saveManualVars} className="w-full bg-black text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:scale-[1.02] active:scale-[0.98] transition-all">
+              Salvar Configurações
+            </button>
           </section>
 
           <div className="h-px bg-gray-100"></div>
 
           <section className="space-y-4">
             <button onClick={runDiagnostic} disabled={testing} className="w-full bg-blue-600 text-white py-5 rounded-[2rem] font-black text-sm uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center gap-3">
-              {testing ? 'CONECTANDO AO GOOGLE...' : 'EXECUTAR TESTE AGORA'}
+              {testing ? 'CONECTANDO...' : 'EXECUTAR TESTE AGORA'}
             </button>
 
             {results && (
               <div className="animate-in fade-in slide-in-from-top-4 duration-500">
                 <div className={`p-4 rounded-2xl border text-center mb-4 ${results.status === 200 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-                   <p className="text-[8px] font-black text-gray-400 uppercase mb-1">Resposta do Servidor</p>
-                   <p className={`text-xl font-black ${results.status === 200 ? 'text-green-600' : 'text-red-600'}`}>Status HTTP: {results.status}</p>
+                   <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Resultado do Google</p>
+                   <p className={`text-xl font-black ${results.status === 200 ? 'text-green-600' : 'text-red-600'}`}>Status HTTP {results.status}</p>
                 </div>
 
                 {results.json?.error ? (
@@ -175,20 +163,20 @@ const DiagnosticModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => 
                     <p className="text-lg font-black leading-tight uppercase tracking-tighter">{results.json.error}</p>
                     <p className="text-xs font-bold leading-relaxed opacity-90">{results.json.details}</p>
                     <div className="bg-white/20 p-4 rounded-2xl text-[11px] font-black leading-tight">
-                      DICA DE OURO: {results.json.hint}
+                      SOLUÇÃO: {results.json.hint}
                     </div>
                   </div>
                 ) : results.status === 200 ? (
                   <div className="p-8 bg-green-600 rounded-[2.5rem] text-white flex items-center gap-5 shadow-2xl">
                     <div className="text-4xl">✅</div>
                     <div>
-                      <p className="text-xl font-black tracking-tighter">CONEXÃO PERFEITA!</p>
-                      <p className="text-xs font-bold opacity-80">Agora a planilha está enviando os dados corretamente.</p>
+                      <p className="text-xl font-black tracking-tighter">PLANILHA CONECTADA!</p>
+                      <p className="text-xs font-bold opacity-80">O sistema já pode ler e gravar dados.</p>
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-black p-5 rounded-3xl overflow-hidden shadow-2xl">
-                    <p className="text-[9px] font-black text-gray-500 uppercase mb-3">Logs de Resposta</p>
+                  <div className="bg-black p-5 rounded-3xl overflow-hidden shadow-2xl border border-gray-800">
+                    <p className="text-[9px] font-black text-gray-500 uppercase mb-3 tracking-widest">Logs de Resposta Bruta</p>
                     <pre className="text-[9px] text-green-400 font-mono whitespace-pre-wrap leading-tight max-h-48 overflow-y-auto custom-scrollbar">
                       {results.rawText}
                     </pre>
@@ -245,7 +233,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
   const handleDemoLogin = () => {
     const demoUser = {
       email: 'convidado@exemplo.com',
-      name: 'Usuário Convidado',
+      name: 'Convidado',
       picture: 'https://ui-avatars.com/api/?name=Convidado&background=0D8ABC&color=fff'
     };
     localStorage.setItem('shopping_user', JSON.stringify(demoUser));
@@ -254,7 +242,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="bg-white p-10 rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center animate-fade-in border border-white">
+      <div className="bg-white p-12 rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center animate-fade-in border border-white">
         <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center text-white font-black text-5xl shadow-2xl shadow-blue-200 mx-auto mb-8 border-4 border-white">L</div>
         <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tighter">Shopping Pro</h1>
         <p className="text-gray-400 mb-12 font-bold uppercase text-[10px] tracking-[0.3em]">Lista Inteligente</p>
@@ -262,7 +250,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
         <div className="space-y-4">
           {hasClientId && <div className="flex justify-center" id="googleBtn"></div>}
           <button onClick={handleDemoLogin} className={`w-full py-5 rounded-2xl font-black transition-all ${hasClientId ? 'text-blue-600 text-sm hover:underline' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-2xl shadow-blue-100'}`}>
-            {hasClientId ? 'Entrar como Convidado' : 'Iniciar App'}
+            {hasClientId ? 'Entrar como Convidado' : 'Acessar App'}
           </button>
         </div>
       </div>
@@ -310,7 +298,7 @@ export default function App() {
       setCategories(SAMPLE_CATEGORIES);
       setItems(SAMPLE_ITEMS);
       setNewItemCat(SAMPLE_CATEGORIES[0].nome);
-      showToast('Modo Demonstração', 'info');
+      showToast('Modo demonstração ativo', 'info');
     } finally {
       setLoading(false);
     }
@@ -350,11 +338,11 @@ export default function App() {
       const updated = await api.getItems();
       setItems(updated.length > 0 ? updated : [...items, { id: Date.now(), nome: newItemName, quantidade: newItemQtd, categoria: newItemCat, precoEstimado: newItemPrice, status: 'pendente', dataAdicao: new Date().toISOString() }]);
       setNewItemName(''); setNewItemQtd(1); setNewItemPrice(0);
-      showToast('Adicionado!', 'success');
+      showToast('Item adicionado!', 'success');
     } catch (e: any) {
       setItems([...items, { id: Date.now(), nome: newItemName, quantidade: newItemQtd, categoria: newItemCat, precoEstimado: newItemPrice, status: 'pendente', dataAdicao: new Date().toISOString() }]);
       setNewItemName(''); setNewItemQtd(1); setNewItemPrice(0);
-      showToast('Salvo em Cache', 'info');
+      showToast('Salvo offline', 'info');
     } finally {
       setLoading(false);
     }
@@ -367,23 +355,23 @@ export default function App() {
   };
 
   const handleRemoveItem = async (id: string | number) => {
-    if (!confirm('Remover item?')) return;
+    if (!confirm('Excluir item?')) return;
     setItems(items.filter(it => it.id !== id));
     try { await api.removeItem(id); } catch (e) {}
   };
 
   const handleFinalize = async () => {
-    if (!confirm('Finalizar carrinho?')) return;
+    if (!confirm('Salvar compra no histórico?')) return;
     setLoading(true);
     try {
       await api.finalizePurchase();
       const updated = await api.getItems();
       setItems(updated);
-      showToast('Compra Finalizada!', 'success');
+      showToast('Compra finalizada!', 'success');
       setActiveTab('historico');
     } catch (e) {
       setItems(items.filter(it => it.status === 'pendente'));
-      showToast('Simulado Localmente', 'success');
+      showToast('Simulado com sucesso', 'success');
       setActiveTab('historico');
     } finally {
       setLoading(false);
@@ -396,7 +384,7 @@ export default function App() {
       const res = await api.getSmartSuggestions(items, categories);
       setSuggestions(res);
     } catch (e) {
-      setSuggestions(['Café', 'Papel Toalha', 'Detergente', 'Pão']);
+      setSuggestions(['Leite', 'Pão', 'Detergente', 'Ovos']);
     } finally {
       setLoadingSuggestions(false);
     }
@@ -433,7 +421,7 @@ export default function App() {
           <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-blue-200">L</div>
           <div>
             <h1 className="font-black text-gray-900 text-xl tracking-tighter">Shopping Pro</h1>
-            <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Painel Inteligente</p>
+            <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Controle Total</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -461,7 +449,7 @@ export default function App() {
             <div className="bg-white p-10 rounded-[3rem] shadow-2xl shadow-blue-50 border border-white">
               <form onSubmit={handleAddItem} className="space-y-5">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Item</label>
+                  <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">O que você precisa?</label>
                   <input type="text" placeholder="Ex: Arroz 5kg" className="w-full px-8 py-6 bg-gray-50 rounded-[2rem] focus:ring-4 focus:ring-blue-100 outline-none font-black text-gray-700 text-lg transition-all" value={newItemName} onChange={e => setNewItemName(e.target.value)} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -476,18 +464,18 @@ export default function App() {
                     </select>
                   </div>
                 </div>
-                <button type="submit" className="w-full bg-blue-600 text-white py-6 rounded-[2rem] font-black text-lg shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 uppercase tracking-widest">Adicionar Agora</button>
+                <button type="submit" className="w-full bg-blue-600 text-white py-6 rounded-[2rem] font-black text-lg shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 uppercase tracking-widest">ADICIONAR ITEM</button>
               </form>
             </div>
 
             <div className="bg-gradient-to-br from-indigo-500 to-blue-600 p-8 rounded-[3rem] text-white shadow-2xl shadow-blue-100">
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h3 className="text-xl font-black tracking-tighter">Sugestões de IA</h3>
-                  <p className="text-[9px] font-black uppercase opacity-60 tracking-widest">Baseado no seu perfil</p>
+                  <h3 className="text-xl font-black tracking-tighter">Sugestões Inteligentes</h3>
+                  <p className="text-[9px] font-black uppercase opacity-60 tracking-widest">Pela IA Gemini</p>
                 </div>
                 <button onClick={handleGetSuggestions} disabled={loadingSuggestions} className="bg-white/20 backdrop-blur-md px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-white/30 transition-all">
-                  {loadingSuggestions ? 'Analizando...' : 'Gerar'}
+                  {loadingSuggestions ? 'Gerando...' : 'Atualizar'}
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -499,9 +487,9 @@ export default function App() {
 
             <div className="space-y-4">
               <div className="flex items-center justify-between px-4">
-                 <h2 className="font-black text-gray-900 uppercase text-xs tracking-widest">Minha Lista ({pendingItems.length})</h2>
+                 <h2 className="font-black text-gray-900 uppercase text-xs tracking-widest">Lista Pendente ({pendingItems.length})</h2>
                  <select className="text-[10px] font-black bg-white px-3 py-1.5 rounded-full border border-gray-100 outline-none" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
-                    <option value="todos">Todas Categorias</option>
+                    <option value="todos">Todos</option>
                     {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
                  </select>
               </div>
@@ -548,8 +536,8 @@ export default function App() {
             </div>
 
             {boughtItems.length > 0 && (
-              <button onClick={handleFinalize} className="w-full bg-green-600 text-white py-8 rounded-[3rem] font-black text-2xl hover:bg-green-700 shadow-2xl shadow-green-100 transition-all active:scale-95 border-b-8 border-green-800 tracking-tighter">
-                FINALIZAR COMPRA
+              <button onClick={handleFinalize} className="w-full bg-green-600 text-white py-8 rounded-[3rem] font-black text-2xl hover:bg-green-700 shadow-2xl shadow-green-100 transition-all active:scale-95 border-b-8 border-green-800 tracking-tighter uppercase">
+                FINALIZAR E SALVAR
               </button>
             )}
           </div>
@@ -563,7 +551,7 @@ export default function App() {
                   <h2 className="text-3xl font-black mt-2 tracking-tighter">R$ {Number(historyData.stats.totalGasto).toFixed(2)}</h2>
                 </div>
                 <div className="bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm flex flex-col justify-center">
-                  <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest">Prefência</p>
+                  <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest">Predileção</p>
                   <h2 className="text-xl font-black mt-2 text-gray-800 truncate tracking-tight">{historyData.stats.categoriaFavorita || 'Sem Dados'}</h2>
                 </div>
              </div>
