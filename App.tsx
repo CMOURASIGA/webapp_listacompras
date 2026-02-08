@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession } from './types';
 import { api } from './services/api';
@@ -47,7 +48,7 @@ const DiagnosticModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => 
   const [testing, setTesting] = useState(false);
   
   const [manualVars, setManualVars] = useState({
-    APPS_SCRIPT_URL: localStorage.getItem('DEBUG_APPS_SCRIPT_URL') || '',
+    APPS_SCRIPT_URL: localStorage.getItem('DEBUG_APPS_SCRIPT_URL') || 'https://script.google.com/macros/s/AKfycbxgt0XKD21dsD8EqMNQv0-8VFvBGjrktswc8t6FC8kwKdVsIZyoelpKO4rRiXOrXBQ/exec',
     API_KEY: localStorage.getItem('DEBUG_API_KEY') || '',
     CLIENT_ID: localStorage.getItem('DEBUG_CLIENT_ID') || ''
   });
@@ -59,7 +60,7 @@ const DiagnosticModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => 
     localStorage.setItem('DEBUG_APPS_SCRIPT_URL', manualVars.APPS_SCRIPT_URL.trim());
     localStorage.setItem('DEBUG_API_KEY', manualVars.API_KEY.trim());
     localStorage.setItem('DEBUG_CLIENT_ID', manualVars.CLIENT_ID.trim());
-    alert('Configurações salvas! Clique em "EXECUTAR TESTE" para validar.');
+    alert('Configurações salvas!');
   };
 
   const runDiagnostic = async () => {
@@ -73,18 +74,12 @@ const DiagnosticModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => 
 
       const response = await fetch(url.toString());
       const status = response.status;
-      const contentType = response.headers.get('content-type');
       const text = await response.text();
       
       let json = null;
       try { json = JSON.parse(text); } catch (e) {}
 
-      setResults({
-        status,
-        contentType,
-        json,
-        rawText: text.substring(0, 1000)
-      });
+      setResults({ status, json, rawText: text.substring(0, 500) });
     } catch (e: any) {
       setResults({ error: e.message });
     } finally {
@@ -95,96 +90,66 @@ const DiagnosticModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[10001] flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] animate-fade-in border border-white/20">
-        <div className="p-8 border-b flex justify-between items-center bg-gray-50/80">
-          <div>
-            <h2 className="text-2xl font-black text-gray-900 tracking-tighter uppercase">Painel de Diagnóstico</h2>
-            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-1">Status da Conexão</p>
-          </div>
-          <button onClick={onClose} className="p-3 hover:bg-gray-200 rounded-full transition-all active:scale-90">
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[10001] flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-fade-in">
+        <div className="p-8 border-b flex justify-between items-center bg-gray-50">
+          <h2 className="text-xl font-black text-gray-900 uppercase">Configurações</h2>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full text-gray-900">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
         
-        <div className="p-8 overflow-y-auto space-y-8 custom-scrollbar">
-          <section className="space-y-4">
+        <div className="p-8 overflow-y-auto space-y-6">
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase block mb-2 tracking-widest">URL do Google Script (/exec)</label>
+            <input 
+              type="text" 
+              className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl text-[12px] font-mono focus:ring-2 focus:ring-blue-500 outline-none text-gray-900 placeholder-gray-300"
+              placeholder="https://script.google.com/macros/s/.../exec"
+              value={manualVars.APPS_SCRIPT_URL}
+              onChange={e => setManualVars({...manualVars, APPS_SCRIPT_URL: e.target.value})}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2 tracking-widest">URL da Web App (/exec)</label>
-              <div className="relative">
-                <input 
-                  type="text" 
-                  className={`w-full bg-gray-50 border ${!isUrlValidFormat && urlInput ? 'border-red-500 bg-red-50' : 'border-gray-100'} p-4 rounded-2xl text-[11px] font-mono focus:ring-2 focus:ring-blue-500 outline-none transition-all pr-12`}
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                  value={manualVars.APPS_SCRIPT_URL}
-                  onChange={e => setManualVars({...manualVars, APPS_SCRIPT_URL: e.target.value})}
-                />
-                <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                  {isUrlValidFormat ? <span className="text-green-500 font-black">✔</span> : <span className="text-red-500 font-black">✘</span>}
-                </div>
-              </div>
-              <p className="text-[10px] text-gray-400 mt-2 px-1">
-                Dica: Vá em <b>Implantar</b> {' > '} <b>Nova Implantação</b> {' > '} <b>App da Web</b> e copie a URL.
-              </p>
+              <label className="text-[10px] font-black text-gray-400 uppercase block mb-2">Gemini Key</label>
+              <input type="password" placeholder="AIza..." className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl text-xs font-mono text-gray-900" value={manualVars.API_KEY} onChange={e => setManualVars({...manualVars, API_KEY: e.target.value})} />
             </div>
-            
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2">Gemini API Key</label>
-                <input type="password" placeholder="AIza..." className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl text-xs font-mono" value={manualVars.API_KEY} onChange={e => setManualVars({...manualVars, API_KEY: e.target.value})} />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-2">Google Client ID</label>
-                <input type="text" placeholder="...apps.googleusercontent.com" className="w-full bg-gray-50 border border-gray-100 p-4 rounded-2xl text-xs font-mono" value={manualVars.CLIENT_ID} onChange={e => setManualVars({...manualVars, CLIENT_ID: e.target.value})} />
-              </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-400 uppercase block mb-2">Client ID</label>
+              <input type="text" placeholder="...apps" className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl text-xs font-mono text-gray-900" value={manualVars.CLIENT_ID} onChange={e => setManualVars({...manualVars, CLIENT_ID: e.target.value})} />
             </div>
-            
-            <button onClick={saveManualVars} className="w-full bg-black text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:scale-[1.02] active:scale-[0.98] transition-all">
-              Salvar Configurações
-            </button>
-          </section>
+          </div>
+          
+          <button onClick={saveManualVars} className="w-full bg-black text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-gray-800 transition-all">
+            Salvar
+          </button>
 
           <div className="h-px bg-gray-100"></div>
 
-          <section className="space-y-4">
-            <button onClick={runDiagnostic} disabled={testing} className="w-full bg-blue-600 text-white py-5 rounded-[2rem] font-black text-sm uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center gap-3">
-              {testing ? 'CONECTANDO...' : 'EXECUTAR TESTE AGORA'}
-            </button>
+          <button onClick={runDiagnostic} disabled={testing} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg hover:bg-blue-700 transition-all">
+            {testing ? 'Testando...' : 'Testar Conexão Agora'}
+          </button>
 
-            {results && (
-              <div className="animate-in fade-in slide-in-from-top-4 duration-500">
-                <div className={`p-4 rounded-2xl border text-center mb-4 ${results.status === 200 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-                   <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Resultado do Google</p>
-                   <p className={`text-xl font-black ${results.status === 200 ? 'text-green-600' : 'text-red-600'}`}>Status HTTP {results.status}</p>
+          {results && (
+            <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100">
+              {results.json?.error ? (
+                <div className="text-red-600">
+                  <p className="font-black text-[10px] uppercase mb-1">Erro Detectado:</p>
+                  <p className="text-xs leading-tight">{results.json.error}</p>
+                  <p className="text-[9px] mt-2 font-bold opacity-70 italic">{results.json.hint}</p>
                 </div>
-
-                {results.json?.error ? (
-                  <div className="bg-red-600 p-6 rounded-[2.5rem] text-white space-y-4 shadow-2xl">
-                    <p className="text-lg font-black leading-tight uppercase tracking-tighter">{results.json.error}</p>
-                    <p className="text-xs font-bold leading-relaxed opacity-90">{results.json.details}</p>
-                    <div className="bg-white/20 p-4 rounded-2xl text-[11px] font-black leading-tight">
-                      SOLUÇÃO: {results.json.hint}
-                    </div>
-                  </div>
-                ) : results.status === 200 ? (
-                  <div className="p-8 bg-green-600 rounded-[2.5rem] text-white flex items-center gap-5 shadow-2xl">
-                    <div className="text-4xl">✅</div>
-                    <div>
-                      <p className="text-xl font-black tracking-tighter">PLANILHA CONECTADA!</p>
-                      <p className="text-xs font-bold opacity-80">O sistema já pode ler e gravar dados.</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-black p-5 rounded-3xl overflow-hidden shadow-2xl border border-gray-800">
-                    <p className="text-[9px] font-black text-gray-500 uppercase mb-3 tracking-widest">Logs de Resposta Bruta</p>
-                    <pre className="text-[9px] text-green-400 font-mono whitespace-pre-wrap leading-tight max-h-48 overflow-y-auto custom-scrollbar">
-                      {results.rawText}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
+              ) : results.status === 200 ? (
+                <p className="text-green-600 font-black text-xs uppercase">✅ Conexão OK (Dados JSON recebidos)</p>
+              ) : (
+                <div className="text-gray-500 text-[9px] font-mono">
+                  <p className="font-black mb-1">Resposta do Servidor:</p>
+                  <pre className="whitespace-pre-wrap">{results.rawText}</pre>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -242,10 +207,10 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="bg-white p-12 rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center animate-fade-in border border-white">
-        <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center text-white font-black text-5xl shadow-2xl shadow-blue-200 mx-auto mb-8 border-4 border-white">L</div>
+      <div className="bg-white p-12 rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center border border-white">
+        <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center text-white font-black text-5xl shadow-xl mx-auto mb-8 border-4 border-white">L</div>
         <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tighter">Shopping Pro</h1>
-        <p className="text-gray-400 mb-12 font-bold uppercase text-[10px] tracking-[0.3em]">Lista Inteligente</p>
+        <p className="text-gray-400 mb-12 font-bold uppercase text-[10px] tracking-[0.3em]">Gestão Inteligente</p>
         
         <div className="space-y-4">
           {hasClientId && <div className="flex justify-center" id="googleBtn"></div>}
@@ -298,7 +263,7 @@ export default function App() {
       setCategories(SAMPLE_CATEGORIES);
       setItems(SAMPLE_ITEMS);
       setNewItemCat(SAMPLE_CATEGORIES[0].nome);
-      showToast('Modo demonstração ativo', 'info');
+      showToast('Modo Offline: Dados em Cache', 'info');
     } finally {
       setLoading(false);
     }
@@ -342,7 +307,7 @@ export default function App() {
     } catch (e: any) {
       setItems([...items, { id: Date.now(), nome: newItemName, quantidade: newItemQtd, categoria: newItemCat, precoEstimado: newItemPrice, status: 'pendente', dataAdicao: new Date().toISOString() }]);
       setNewItemName(''); setNewItemQtd(1); setNewItemPrice(0);
-      showToast('Salvo offline', 'info');
+      showToast('Salvo Localmente', 'info');
     } finally {
       setLoading(false);
     }
@@ -355,23 +320,23 @@ export default function App() {
   };
 
   const handleRemoveItem = async (id: string | number) => {
-    if (!confirm('Excluir item?')) return;
+    if (!confirm('Remover este item?')) return;
     setItems(items.filter(it => it.id !== id));
     try { await api.removeItem(id); } catch (e) {}
   };
 
   const handleFinalize = async () => {
-    if (!confirm('Salvar compra no histórico?')) return;
+    if (!confirm('Salvar esta compra?')) return;
     setLoading(true);
     try {
       await api.finalizePurchase();
       const updated = await api.getItems();
       setItems(updated);
-      showToast('Compra finalizada!', 'success');
+      showToast('Finalizado!', 'success');
       setActiveTab('historico');
     } catch (e) {
       setItems(items.filter(it => it.status === 'pendente'));
-      showToast('Simulado com sucesso', 'success');
+      showToast('Finalizado localmente', 'success');
       setActiveTab('historico');
     } finally {
       setLoading(false);
@@ -384,7 +349,7 @@ export default function App() {
       const res = await api.getSmartSuggestions(items, categories);
       setSuggestions(res);
     } catch (e) {
-      setSuggestions(['Leite', 'Pão', 'Detergente', 'Ovos']);
+      setSuggestions(['Café', 'Açúcar', 'Arroz', 'Manteiga']);
     } finally {
       setLoadingSuggestions(false);
     }
@@ -398,7 +363,7 @@ export default function App() {
   if (!user && !loading) return (
     <>
       <LoginScreen onLogin={setUser} />
-      <button onClick={() => setIsDebugOpen(true)} className="fixed bottom-8 right-8 bg-white/80 backdrop-blur p-4 rounded-3xl border border-gray-200 shadow-2xl hover:scale-110 transition-all z-[9999] active:scale-90 flex items-center gap-2">
+      <button onClick={() => setIsDebugOpen(true)} className="fixed bottom-8 right-8 bg-white/80 p-4 rounded-3xl border border-gray-200 shadow-2xl z-[9999] active:scale-90 flex items-center gap-2">
          <span className="text-xl">⚙️</span>
          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Config</span>
       </button>
@@ -411,7 +376,7 @@ export default function App() {
   const cartTotal = boughtItems.reduce((acc, curr) => acc + (curr.precoEstimado * curr.quantidade), 0);
 
   return (
-    <div className="max-w-4xl mx-auto pb-24 min-h-screen flex flex-col relative bg-gray-50">
+    <div className="max-w-4xl mx-auto pb-24 min-h-screen flex flex-col bg-gray-50">
       {loading && <LoadingOverlay />}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <DiagnosticModal isOpen={isDebugOpen} onClose={() => setIsDebugOpen(false)} />
@@ -421,22 +386,22 @@ export default function App() {
           <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-blue-200">L</div>
           <div>
             <h1 className="font-black text-gray-900 text-xl tracking-tighter">Shopping Pro</h1>
-            <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Controle Total</p>
+            <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Controle Pro</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <button onClick={() => setIsDebugOpen(true)} className="p-3 hover:bg-gray-100 rounded-2xl transition-all group">
-            <span className="text-xl opacity-40 group-hover:opacity-100 transition-opacity">⚙️</span>
+          <button onClick={() => setIsDebugOpen(true)} className="p-3 hover:bg-gray-100 rounded-2xl group transition-all">
+            <span className="text-xl opacity-40 group-hover:opacity-100 text-gray-900">⚙️</span>
           </button>
           <button onClick={handleLogout} className="group relative">
-            <img src={user?.picture} className="w-12 h-12 rounded-2xl border-4 border-white shadow-xl transition-all group-hover:ring-4 group-hover:ring-blue-50" />
+            <img src={user?.picture} className="w-12 h-12 rounded-2xl border-4 border-white shadow-xl group-hover:ring-4 group-hover:ring-blue-50 transition-all" />
           </button>
         </div>
       </header>
 
       <nav className="flex border-b bg-white sticky top-[89px] z-40 px-4">
         {['lista', 'carrinho', 'historico'].map(t => (
-          <button key={t} onClick={() => setActiveTab(t as any)} className={`flex-1 py-6 font-black text-[10px] uppercase tracking-[0.2em] transition-all relative ${activeTab === t ? `text-${t === 'lista' ? 'blue' : t === 'carrinho' ? 'green' : 'purple'}-600` : 'text-gray-300'}`}>
+          <button key={t} onClick={() => setActiveTab(t as any)} className={`flex-1 py-6 font-black text-[10px] uppercase tracking-[0.2em] relative ${activeTab === t ? `text-${t === 'lista' ? 'blue' : t === 'carrinho' ? 'green' : 'purple'}-600` : 'text-gray-300'}`}>
             {t} {t === 'carrinho' && `(${boughtItems.length})`}
             {activeTab === t && <div className={`absolute bottom-0 left-4 right-4 h-1 rounded-t-full bg-${t === 'lista' ? 'blue' : t === 'carrinho' ? 'green' : 'purple'}-600`}></div>}
           </button>
@@ -446,36 +411,36 @@ export default function App() {
       <main className="p-4 flex-1">
         {activeTab === 'lista' && (
           <div className="space-y-6 animate-fade-in">
-            <div className="bg-white p-10 rounded-[3rem] shadow-2xl shadow-blue-50 border border-white">
+            <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-white">
               <form onSubmit={handleAddItem} className="space-y-5">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">O que você precisa?</label>
-                  <input type="text" placeholder="Ex: Arroz 5kg" className="w-full px-8 py-6 bg-gray-50 rounded-[2rem] focus:ring-4 focus:ring-blue-100 outline-none font-black text-gray-700 text-lg transition-all" value={newItemName} onChange={e => setNewItemName(e.target.value)} />
+                  <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">O que falta?</label>
+                  <input type="text" placeholder="Ex: Arroz 5kg" className="w-full px-8 py-6 bg-gray-50 rounded-[2rem] focus:ring-4 focus:ring-blue-100 outline-none font-black text-gray-700 text-lg text-gray-900" value={newItemName} onChange={e => setNewItemName(e.target.value)} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Qtd</label>
-                    <input type="number" className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none" value={newItemQtd} onChange={e => setNewItemQtd(Number(e.target.value))} />
+                    <input type="number" className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900" value={newItemQtd} onChange={e => setNewItemQtd(Number(e.target.value))} />
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Categoria</label>
-                    <select className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none appearance-none" value={newItemCat} onChange={e => setNewItemCat(e.target.value)}>
+                    <select className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900" value={newItemCat} onChange={e => setNewItemCat(e.target.value)}>
                       {categories.map(c => <option key={c.id} value={c.nome}>{c.icone} {c.nome}</option>)}
                     </select>
                   </div>
                 </div>
-                <button type="submit" className="w-full bg-blue-600 text-white py-6 rounded-[2rem] font-black text-lg shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 uppercase tracking-widest">ADICIONAR ITEM</button>
+                <button type="submit" className="w-full bg-blue-600 text-white py-6 rounded-[2rem] font-black text-lg shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 uppercase tracking-widest">Adicionar Item</button>
               </form>
             </div>
 
             <div className="bg-gradient-to-br from-indigo-500 to-blue-600 p-8 rounded-[3rem] text-white shadow-2xl shadow-blue-100">
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h3 className="text-xl font-black tracking-tighter">Sugestões Inteligentes</h3>
-                  <p className="text-[9px] font-black uppercase opacity-60 tracking-widest">Pela IA Gemini</p>
+                  <h3 className="text-xl font-black tracking-tighter">Sugestões de IA</h3>
+                  <p className="text-[9px] font-black uppercase opacity-60 tracking-widest">Pelo Google Gemini</p>
                 </div>
                 <button onClick={handleGetSuggestions} disabled={loadingSuggestions} className="bg-white/20 backdrop-blur-md px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-white/30 transition-all">
-                  {loadingSuggestions ? 'Gerando...' : 'Atualizar'}
+                  {loadingSuggestions ? 'Gerando...' : 'Obter'}
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -487,12 +452,13 @@ export default function App() {
 
             <div className="space-y-4">
               <div className="flex items-center justify-between px-4">
-                 <h2 className="font-black text-gray-900 uppercase text-xs tracking-widest">Lista Pendente ({pendingItems.length})</h2>
-                 <select className="text-[10px] font-black bg-white px-3 py-1.5 rounded-full border border-gray-100 outline-none" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
-                    <option value="todos">Todos</option>
+                 <h2 className="font-black text-gray-900 uppercase text-xs tracking-widest">Sua Lista ({pendingItems.length})</h2>
+                 <select className="text-[10px] font-black bg-white px-3 py-1.5 rounded-full border border-gray-100 outline-none text-gray-700" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+                    <option value="todos">Todas</option>
                     {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
                  </select>
               </div>
+              {pendingItems.length === 0 && <p className="text-center py-10 text-gray-400 font-bold uppercase text-[10px] tracking-widest">Nenhum item pendente</p>}
               {pendingItems.map(it => (
                 <div key={it.id} className="bg-white p-6 rounded-[2.5rem] shadow-xl shadow-gray-100 border border-white flex items-center justify-between group hover:border-blue-200 transition-all">
                   <div className="flex items-center gap-6">
@@ -521,7 +487,7 @@ export default function App() {
             <div className="space-y-4">
               {boughtItems.map(it => (
                 <div key={it.id} className="bg-white p-6 rounded-[2.5rem] border border-gray-100 flex items-center gap-6 shadow-sm">
-                  <button onClick={() => handleToggleStatus(it.id)} className="w-10 h-10 rounded-[1.2rem] bg-green-500 flex items-center justify-center text-white shadow-lg shadow-green-100">
+                  <button onClick={() => handleToggleStatus(it.id)} className="w-10 h-10 rounded-[1.2rem] bg-green-500 flex items-center justify-center text-white shadow-lg">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   </button>
                   <div className="flex-1">
@@ -536,8 +502,8 @@ export default function App() {
             </div>
 
             {boughtItems.length > 0 && (
-              <button onClick={handleFinalize} className="w-full bg-green-600 text-white py-8 rounded-[3rem] font-black text-2xl hover:bg-green-700 shadow-2xl shadow-green-100 transition-all active:scale-95 border-b-8 border-green-800 tracking-tighter uppercase">
-                FINALIZAR E SALVAR
+              <button onClick={handleFinalize} className="w-full bg-green-600 text-white py-8 rounded-[3rem] font-black text-2xl hover:bg-green-700 shadow-2xl shadow-green-100 transition-all border-b-8 border-green-800 tracking-tighter uppercase">
+                FECHAR COMPRA
               </button>
             )}
           </div>
@@ -546,21 +512,21 @@ export default function App() {
         {activeTab === 'historico' && historyData && (
           <div className="space-y-6 animate-fade-in">
              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-purple-600 p-8 rounded-[3rem] text-white shadow-2xl shadow-purple-100">
-                  <p className="text-purple-100 text-[9px] font-black uppercase tracking-widest opacity-70">Gasto Acumulado</p>
+                <div className="bg-purple-600 p-8 rounded-[3rem] text-white shadow-2xl">
+                  <p className="text-purple-100 text-[9px] font-black uppercase tracking-widest opacity-70">Gasto Total</p>
                   <h2 className="text-3xl font-black mt-2 tracking-tighter">R$ {Number(historyData.stats.totalGasto).toFixed(2)}</h2>
                 </div>
                 <div className="bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm flex flex-col justify-center">
-                  <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest">Predileção</p>
-                  <h2 className="text-xl font-black mt-2 text-gray-800 truncate tracking-tight">{historyData.stats.categoriaFavorita || 'Sem Dados'}</h2>
+                  <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest">Mais Comprado</p>
+                  <h2 className="text-xl font-black mt-2 text-gray-800 truncate tracking-tight">{historyData.stats.categoriaFavorita || '---'}</h2>
                 </div>
              </div>
              
              {historyData.compras.map(p => (
-               <div key={p.id} className="bg-white rounded-[3rem] border border-gray-100 overflow-hidden shadow-xl shadow-gray-50 group hover:border-purple-200 transition-all">
-                 <div className="p-8 bg-gray-50 flex justify-between items-center border-b border-gray-100">
+               <div key={p.id} className="bg-white rounded-[3rem] border border-gray-100 overflow-hidden shadow-xl group hover:border-purple-200 transition-all">
+                 <div className="p-8 bg-gray-50 flex justify-between items-center border-b border-gray-100 text-gray-900">
                    <div>
-                     <span className="font-black text-gray-900 block text-lg tracking-tighter">{p.data}</span>
+                     <span className="font-black block text-lg tracking-tighter">{p.data}</span>
                      <span className="text-[9px] font-black text-purple-500 uppercase tracking-widest">ID: {p.id}</span>
                    </div>
                    <div className="text-right">
@@ -590,11 +556,6 @@ export default function App() {
             <button key={t} onClick={() => setActiveTab(t as any)} className={`flex flex-col items-center gap-2 relative transition-all ${activeTab === t ? 'scale-110' : 'grayscale opacity-50'}`}>
               <div className="text-3xl">{t === 'lista' ? '📋' : t === 'carrinho' ? '🛒' : '📅'}</div>
               <span className={`text-[9px] font-black uppercase tracking-tighter ${activeTab === t ? `text-${t === 'lista' ? 'blue' : t === 'carrinho' ? 'green' : 'purple'}-600` : 'text-gray-400'}`}>{t}</span>
-              {t === 'carrinho' && boughtItems.length > 0 && (
-                <span className="absolute -top-1 -right-3 bg-red-600 text-white text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center border-4 border-white shadow-lg animate-pulse">
-                  {boughtItems.length}
-                </span>
-              )}
             </button>
           ))}
       </footer>

@@ -1,8 +1,5 @@
-import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession } from '../types';
 
-/**
- * SERVIÇO DE COMUNICAÇÃO (REACT -> VERCEL BACKEND)
- */
+import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession } from '../types';
 
 async function callBackend(action: string, data: any = null) {
   const url = new URL('/api', window.location.origin);
@@ -12,12 +9,11 @@ async function callBackend(action: string, data: any = null) {
     url.searchParams.set('payload', JSON.stringify(data));
   }
 
-  // Verifica se há overrides manuais no localStorage para facilitar o debug
   const manualUrl = localStorage.getItem('DEBUG_APPS_SCRIPT_URL');
   const manualKey = localStorage.getItem('DEBUG_API_KEY');
   
-  if (manualUrl) url.searchParams.set('override_url', manualUrl);
-  if (manualKey) url.searchParams.set('override_key', manualKey);
+  if (manualUrl) url.searchParams.set('override_url', manualUrl.trim());
+  if (manualKey) url.searchParams.set('override_key', manualKey.trim());
 
   const savedUser = localStorage.getItem('shopping_user');
   const user: UserSession | null = savedUser ? JSON.parse(savedUser) : null;
@@ -27,11 +23,25 @@ async function callBackend(action: string, data: any = null) {
   }
 
   try {
-    const response = await fetch(url.toString());
-    const result = await response.json();
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    const text = await response.text();
+    
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch (e) {
+      if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+        throw new Error("O servidor retornou uma página HTML (Erro de Roteamento ou 404). Verifique se a URL do Script está correta no ícone de engrenagem.");
+      }
+      throw new Error(`Resposta inválida: ${text.substring(0, 50)}`);
+    }
     
     if (!response.ok) {
-      throw new Error(result.details || result.error || `Erro (${response.status})`);
+      throw new Error(result.details || result.error || `Erro HTTP ${response.status}`);
     }
     
     return result.data;

@@ -1,8 +1,12 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 export const config = {
   runtime: 'edge',
 };
+
+// URL ABSOLUTA fornecida pelo usuário para evitar erro 404
+const FALLBACK_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxgt0XKD21dsD8EqMNQv0-8VFvBGjrktswc8t6FC8kwKdVsIZyoelpKO4rRiXOrXBQ/exec";
 
 export default async function handler(req: Request) {
   const url = new URL(req.url);
@@ -13,38 +17,32 @@ export default async function handler(req: Request) {
   const overrideUrl = url.searchParams.get('override_url');
   const overrideKey = url.searchParams.get('override_key');
 
-  const SCRIPT_URL_RAW = overrideUrl || process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL;
+  const SCRIPT_URL_RAW = overrideUrl || process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL || FALLBACK_SCRIPT_URL;
   const EFFECTIVE_API_KEY = overrideKey || process.env.API_KEY;
 
   const jsonResponse = (data: any, status = 200) => new Response(JSON.stringify(data), {
     status,
     headers: { 
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
     }
   });
 
-  if (!SCRIPT_URL_RAW && action !== 'getSmartSuggestions') {
-    return jsonResponse({ 
-      error: "Configuração Pendente",
-      details: "URL do Google Script não configurada.",
-      hint: "Abra o painel de configuração (engrenagem) e insira a URL de implantação."
-    }, 500);
-  }
+  if (req.method === 'OPTIONS') return jsonResponse({}, 200);
 
-  // IA Sugestões
+  // IA Sugestões (Gemini)
   if (action === 'getSmartSuggestions') {
-    if (!EFFECTIVE_API_KEY) return jsonResponse({ error: "Gemini API Key não configurada." }, 500);
+    if (!EFFECTIVE_API_KEY) return jsonResponse({ error: "API Key não configurada." }, 400);
     try {
       const payload = payloadStr ? JSON.parse(payloadStr) : { items: [], categories: [] };
       const ai = new GoogleGenAI({ apiKey: EFFECTIVE_API_KEY });
       const currentItems = payload.items.map((i: any) => i.nome).join(", ");
-      
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Sugira 5 itens de compras que faltam para quem já tem: [${currentItems || 'nada'}]. Responda apenas os nomes separados por vírgula.`,
+        contents: `Lista: [${currentItems}]. Sugira 5 itens de mercado. Responda apenas nomes separados por vírgula.`,
       });
-
       const suggestions = (response.text || "").split(',').map(s => s.trim()).filter(s => s.length > 0);
       return jsonResponse({ data: suggestions });
     } catch (e: any) {
@@ -52,20 +50,17 @@ export default async function handler(req: Request) {
     }
   }
 
-  // Proxy para Google Apps Script
+  // Proxy para Google Scripts
   try {
-    let sanitizedUrl = SCRIPT_URL_RAW!.trim();
-    
+    let sanitizedUrl = SCRIPT_URL_RAW.trim();
     if (sanitizedUrl.includes('/edit')) {
        return jsonResponse({ 
-          error: "URL de Editor Detectada",
-          details: "Você colou a URL da página de edição do código.",
-          hint: "Clique em 'Implantar' -> 'Nova Implantação' -> 'App da Web' e copie a URL que termina em /exec."
+          error: "URL Inválida (Modo Editor)",
+          details: "Você está usando a URL do editor. Use a URL de IMPLANTAÇÃO (/exec).",
+          hint: "Vá em Implantar > Nova Implantação e copie a URL final."
         }, 400);
     }
 
-    if (!sanitizedUrl.startsWith('http')) sanitizedUrl = 'https://' + sanitizedUrl;
-    
     const targetUrl = new URL(sanitizedUrl);
     if (action) targetUrl.searchParams.set('action', action);
     if (payloadStr) targetUrl.searchParams.set('payload', payloadStr);
@@ -80,12 +75,13 @@ export default async function handler(req: Request) {
     const text = await response.text();
     const contentType = response.headers.get('content-type') || '';
 
-    // O erro 404 (robô do Google) significa que o ID do Script na URL não existe ou não está publicado
-    if (response.status === 404 || contentType.includes('text/html')) {
+    // Detecção de Erro do Google (HTML retornado em vez de JSON)
+    if (response.status === 404 || text.includes('<!DOCTYPE') || text.includes('html') || contentType.includes('text/html')) {
        return jsonResponse({ 
-          error: "Erro 404: WebApp não encontrado",
-          details: "O Google Scripts respondeu, mas disse que esta implantação não existe ou está inacessível.",
-          hint: "1. Vá no Apps Script. 2. 'Implantar' -> 'Gerenciar Implantações'. 3. Verifique se existe uma versão ativa. 4. Garanta que o acesso está definido como 'Qualquer Pessoa' (Anyone)."
+          error: "Google Script não respondeu com JSON",
+          details: "O servidor retornou uma página HTML ou erro 404.",
+          hint: "1. Verifique se a URL termina em /exec.\n2. Verifique se o ID do Script está correto.\n3. Certifique-se que o script está implantado para 'Qualquer Pessoa'.",
+          google_status: response.status
         }, 500);
     }
 
@@ -94,12 +90,12 @@ export default async function handler(req: Request) {
       return jsonResponse(data);
     } catch (e) {
       return jsonResponse({ 
-        error: "Resposta Inválida", 
-        details: "O script não retornou um JSON. Verifique se você publicou o código corretamente.",
-        raw: text.substring(0, 200)
+        error: "Resposta do Google não é um JSON válido", 
+        details: "O script retornou texto puro em vez de dados formatados.",
+        preview: text.substring(0, 80)
       }, 500);
     }
   } catch (e: any) {
-    return jsonResponse({ error: "Falha na Conexão", details: e.message }, 500);
+    return jsonResponse({ error: "Erro de Proxy Fatal", details: e.message }, 500);
   }
 }
