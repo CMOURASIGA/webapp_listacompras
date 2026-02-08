@@ -92,6 +92,9 @@ export default async function handler(req: Request) {
 
     try {
       const data = JSON.parse(text);
+      if (data?.error) {
+        return jsonResponse(data, 500);
+      }
       return jsonResponse(data);
     } catch (e) {
       return jsonResponse({ 

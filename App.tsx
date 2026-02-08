@@ -2,20 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession } from './types';
 import { api } from './services/api';
 
-// --- Dados de Amostra ---
-const SAMPLE_CATEGORIES: Category[] = [
-  { id: '1', nome: 'Grãos', icone: '🌾', cor: '#FFB74D' },
-  { id: '2', nome: 'Carnes', icone: '🥩', cor: '#EF5350' },
-  { id: '3', nome: 'Laticínios', icone: '🥛', cor: '#42A5F5' },
-  { id: '4', nome: 'Limpeza', icone: '🧹', cor: '#FFA726' }
-];
-
-const SAMPLE_ITEMS: ShoppingItem[] = [
-  { id: 1, nome: 'Arroz 5kg', quantidade: 1, categoria: 'Grãos', precoEstimado: 25.90, status: 'pendente', dataAdicao: new Date().toISOString() },
-  { id: 2, nome: 'Feijão Carioca', quantidade: 2, categoria: 'Grãos', precoEstimado: 8.50, status: 'pendente', dataAdicao: new Date().toISOString() },
-  { id: 3, nome: 'Leite Integral', quantidade: 4, categoria: 'Laticínios', precoEstimado: 5.20, status: 'comprado', dataAdicao: new Date().toISOString() }
-];
-
 // --- Sub-components ---
 
 const LoadingOverlay = ({ message = "Sincronizando..." }) => (
@@ -65,20 +51,38 @@ const DiagnosticModal = ({ isOpen, onClose, onRefresh }: { isOpen: boolean, onCl
     setTesting(true);
     setResults(null);
     try {
-      const url = new URL('/api', window.location.origin);
+      const isDev = (import.meta as any).env?.DEV === true;
+      const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      const forceDirect = String((import.meta as any).env?.VITE_FORCE_DIRECT_SCRIPT || '').toLowerCase() === 'true';
+      const useDirectScript = forceDirect || !(isDev && isLocalhost);
+      const base = useDirectScript ? manualVars.APPS_SCRIPT_URL.trim() : new URL('/api', window.location.origin).toString();
+      const url = new URL(base);
       url.searchParams.set('action', 'listarCategorias');
       url.searchParams.set('_t', Date.now().toString()); // Cache buster manual
-      if (manualVars.APPS_SCRIPT_URL) url.searchParams.set('override_url', manualVars.APPS_SCRIPT_URL.trim());
-      if (manualVars.API_KEY) url.searchParams.set('override_key', manualVars.API_KEY.trim());
+      if (!useDirectScript) {
+        if (manualVars.APPS_SCRIPT_URL) url.searchParams.set('override_url', manualVars.APPS_SCRIPT_URL.trim());
+        if (manualVars.API_KEY) url.searchParams.set('override_key', manualVars.API_KEY.trim());
+      }
 
-      const response = await fetch(url.toString(), { cache: 'no-store' });
+      const response = await fetch(url.toString(), {
+        cache: 'no-store',
+        credentials: useDirectScript ? 'include' : 'same-origin'
+      });
       const status = response.status;
       const text = await response.text();
+      const contentType = response.headers.get('content-type') || '';
       
       let json = null;
       try { json = JSON.parse(text); } catch (e) {}
 
-      setResults({ status, json, rawText: text.substring(0, 500) });
+      setResults({
+        status,
+        json,
+        isJson: !!json,
+        contentType,
+        targetUrl: url.toString(),
+        rawText: text.substring(0, 500)
+      });
     } catch (e: any) {
       setResults({ error: e.message });
     } finally {
@@ -141,7 +145,7 @@ const DiagnosticModal = ({ isOpen, onClose, onRefresh }: { isOpen: boolean, onCl
                   <p className="text-xs font-bold leading-tight">{results.json.error}</p>
                   <p className="text-[10px] mt-2 font-medium opacity-70 italic">{results.json.hint}</p>
                 </div>
-              ) : results.status === 200 ? (
+              ) : (results.status === 200 && results.isJson && Array.isArray(results.json?.data)) ? (
                 <div className="text-green-600 flex items-center gap-2">
                   <span className="text-lg">✅</span>
                   <p className="font-black text-xs uppercase tracking-widest">Planilha Conectada com Sucesso!</p>
@@ -149,6 +153,8 @@ const DiagnosticModal = ({ isOpen, onClose, onRefresh }: { isOpen: boolean, onCl
               ) : (
                 <div className="text-gray-500 text-[9px] font-mono bg-gray-900 p-4 rounded-xl">
                   <p className="text-gray-400 font-black mb-2 uppercase">Resposta Bruta:</p>
+                  <p className="text-gray-400 mb-2">Status: {results.status} | Content-Type: {results.contentType || 'n/a'}</p>
+                  <p className="text-gray-400 mb-2 break-all">URL: {results.targetUrl || 'n/a'}</p>
                   <pre className="whitespace-pre-wrap text-green-400 overflow-x-auto">{results.rawText}</pre>
                 </div>
               )}
@@ -167,7 +173,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
 
   useEffect(() => {
     const manualId = localStorage.getItem('DEBUG_CLIENT_ID');
-    const clientId = manualId || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+    const clientId = manualId || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID;
     
     if (!clientId || clientId.includes("CLIENT_ID_AQUI")) {
       setHasClientId(false);
@@ -244,6 +250,15 @@ export default function App() {
   const [newItemQtd, setNewItemQtd] = useState(1);
   const [newItemCat, setNewItemCat] = useState('');
   const [newItemPrice, setNewItemPrice] = useState(0);
+  const [showNewCategoryForm, setShowNewCategoryForm] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryIcon, setNewCategoryIcon] = useState('📦');
+  const [newCategoryColor, setNewCategoryColor] = useState('#9E9E9E');
+  const [editingItemId, setEditingItemId] = useState<string | number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editQtd, setEditQtd] = useState(1);
+  const [editCat, setEditCat] = useState('');
+  const [editPrice, setEditPrice] = useState(0);
 
   useEffect(() => {
     const savedUser = localStorage.getItem('shopping_user');
@@ -256,18 +271,35 @@ export default function App() {
   const fetchInitialData = async () => {
     setLoading(true);
     try {
+      const bootstrap = await api.bootstrap();
+      if (bootstrap?.spreadsheetId) {
+        localStorage.setItem('shopping_spreadsheet_id', bootstrap.spreadsheetId);
+      }
+      if (bootstrap?.spreadsheetUrl) {
+        localStorage.setItem('shopping_spreadsheet_url', bootstrap.spreadsheetUrl);
+      }
+      if (bootstrap?.created) {
+        showToast('Planilha criada automaticamente para sua conta.', 'success');
+      }
+
       const [cats, initialItems] = await Promise.all([
         api.getCategories(),
         api.getItems()
       ]);
-      setCategories(cats.length > 0 ? cats : SAMPLE_CATEGORIES);
-      setNewItemCat(cats.length > 0 ? cats[0].nome : SAMPLE_CATEGORIES[0].nome);
-      setItems(initialItems.length > 0 ? initialItems : SAMPLE_ITEMS);
+      setCategories(cats);
+      setItems(initialItems);
+      if (editingItemId !== null && !initialItems.some(i => i.id === editingItemId)) {
+        handleCancelEditItem();
+      }
+      setNewItemCat(cats[0]?.nome || '');
+      if (!cats.length || !initialItems.length) {
+        showToast('Nenhum dado encontrado na planilha.', 'info');
+      }
     } catch (e: any) {
-      setCategories(SAMPLE_CATEGORIES);
-      setItems(SAMPLE_ITEMS);
-      setNewItemCat(SAMPLE_CATEGORIES[0].nome);
-      showToast('Cache Ativo', 'info');
+      setCategories([]);
+      setItems([]);
+      setNewItemCat('');
+      showToast(e?.message || 'Erro ao carregar dados da planilha', 'error');
     } finally {
       setLoading(false);
     }
@@ -284,6 +316,7 @@ export default function App() {
       setHistoryData(data);
     } catch (e: any) {
       setHistoryData({ compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } });
+      showToast(e?.message || 'Erro ao carregar histórico da planilha', 'error');
     } finally {
       setLoading(false);
     }
@@ -300,33 +333,146 @@ export default function App() {
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newItemName) return;
+    if (!newItemName || !newItemCat) {
+      showToast('Informe nome e categoria para salvar na planilha.', 'error');
+      return;
+    }
     setLoading(true);
     try {
       await api.addItem({ nome: newItemName, quantidade: newItemQtd, categoria: newItemCat, precoEstimado: newItemPrice });
       const updated = await api.getItems();
-      setItems(updated.length > 0 ? updated : [...items, { id: Date.now(), nome: newItemName, quantidade: newItemQtd, categoria: newItemCat, precoEstimado: newItemPrice, status: 'pendente', dataAdicao: new Date().toISOString() }]);
+      setItems(updated);
       setNewItemName(''); setNewItemQtd(1); setNewItemPrice(0);
       showToast('Item adicionado!', 'success');
     } catch (e: any) {
-      setItems([...items, { id: Date.now(), nome: newItemName, quantidade: newItemQtd, categoria: newItemCat, precoEstimado: newItemPrice, status: 'pendente', dataAdicao: new Date().toISOString() }]);
-      setNewItemName(''); setNewItemQtd(1); setNewItemPrice(0);
-      showToast('Salvo Localmente', 'info');
+      showToast(e?.message || 'Erro ao salvar item na planilha', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   const handleToggleStatus = async (id: string | number) => {
-    const updatedLocal = items.map(it => it.id === id ? { ...it, status: (it.status === 'pendente' ? 'comprado' : 'pendente') as any } : it);
-    setItems(updatedLocal);
-    try { await api.toggleStatus(id); } catch (e) {}
+    setLoading(true);
+    try {
+      await api.toggleStatus(id);
+      const refreshed = await api.getItems();
+      setItems(refreshed);
+      if (editingItemId === id) handleCancelEditItem();
+    } catch (e: any) {
+      showToast(e?.message || 'Erro ao atualizar status no servidor', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRemoveItem = async (id: string | number) => {
     if (!confirm('Remover este item?')) return;
-    setItems(items.filter(it => it.id !== id));
-    try { await api.removeItem(id); } catch (e) {}
+    setLoading(true);
+    try {
+      await api.removeItem(id);
+      const refreshed = await api.getItems();
+      setItems(refreshed);
+      if (editingItemId === id) handleCancelEditItem();
+    } catch (e: any) {
+      showToast(e?.message || 'Erro ao remover item na planilha', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStartEditItem = (item: ShoppingItem) => {
+    setEditingItemId(item.id);
+    setEditName(item.nome || '');
+    setEditQtd(Number(item.quantidade) || 1);
+    setEditCat(item.categoria || categories[0]?.nome || '');
+    setEditPrice(Number(item.precoEstimado) || 0);
+  };
+
+  const handleCancelEditItem = () => {
+    setEditingItemId(null);
+    setEditName('');
+    setEditQtd(1);
+    setEditCat('');
+    setEditPrice(0);
+  };
+
+  const handleSaveEditItem = async () => {
+    if (editingItemId === null) return;
+    if (!editName.trim() || !editCat.trim()) {
+      showToast('Informe nome e categoria para editar o item.', 'error');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await api.updateItem(editingItemId, {
+        nome: editName.trim(),
+        quantidade: Number(editQtd) || 1,
+        categoria: editCat,
+        precoEstimado: Number(editPrice) || 0
+      });
+      const refreshed = await api.getItems();
+      setItems(refreshed);
+      handleCancelEditItem();
+      showToast('Item atualizado!', 'success');
+    } catch (e: any) {
+      showToast(e?.message || 'Erro ao editar item na planilha', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim()) {
+      showToast('Informe o nome da categoria.', 'error');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const added = await api.addCategory({
+        nome: newCategoryName.trim(),
+        icone: (newCategoryIcon || '📦').trim(),
+        cor: (newCategoryColor || '#9E9E9E').trim()
+      });
+      const updatedCats = await api.getCategories();
+      setCategories(updatedCats);
+      setNewItemCat(added?.nome || newCategoryName.trim());
+      setNewCategoryName('');
+      setNewCategoryIcon('📦');
+      setNewCategoryColor('#9E9E9E');
+      setShowNewCategoryForm(false);
+      showToast('Categoria adicionada!', 'success');
+    } catch (e: any) {
+      const msg = e?.message || 'Erro ao adicionar categoria';
+      if (msg.includes('Ação não reconhecida')) {
+        showToast('Backend sem suporte a nova categoria. Reimplante o Apps Script atualizado.', 'error');
+      } else {
+        showToast(msg, 'error');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReloadFromHistory = async (purchaseId: string | number) => {
+    if (!confirm('Carregar os itens desta compra para a lista atual?')) return;
+    setLoading(true);
+    try {
+      await api.reloadList(purchaseId);
+      const [updatedItems, updatedHistory] = await Promise.all([
+        api.getItems(),
+        api.getHistory()
+      ]);
+      setItems(updatedItems);
+      setHistoryData(updatedHistory);
+      setActiveTab('lista');
+      showToast('Itens carregados do histórico para a lista.', 'success');
+    } catch (e: any) {
+      showToast(e?.message || 'Erro ao carregar compra do histórico', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleFinalize = async () => {
@@ -336,12 +482,12 @@ export default function App() {
       await api.finalizePurchase();
       const updated = await api.getItems();
       setItems(updated);
+      const updatedHistory = await api.getHistory();
+      setHistoryData(updatedHistory);
       showToast('Finalizado!', 'success');
       setActiveTab('historico');
-    } catch (e) {
-      setItems(items.filter(it => it.status === 'pendente'));
-      showToast('Finalizado localmente', 'success');
-      setActiveTab('historico');
+    } catch (e: any) {
+      showToast(e?.message || 'Erro ao finalizar compra na planilha', 'error');
     } finally {
       setLoading(false);
     }
@@ -421,18 +567,40 @@ export default function App() {
                   <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">O que você precisa?</label>
                   <input type="text" placeholder="Ex: Arroz 5kg" className="w-full px-8 py-6 bg-gray-50 rounded-[2rem] focus:ring-4 focus:ring-blue-100 outline-none font-black text-gray-900 text-lg shadow-inner border border-gray-100" value={newItemName} onChange={e => setNewItemName(e.target.value)} />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Qtd</label>
-                    <input type="number" className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100" value={newItemQtd} onChange={e => setNewItemQtd(Number(e.target.value))} />
+                    <input type="number" min={1} className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100" value={newItemQtd} onChange={e => setNewItemQtd(Number(e.target.value))} />
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Categoria</label>
                     <select className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100 appearance-none" value={newItemCat} onChange={e => setNewItemCat(e.target.value)}>
                       {categories.map(c => <option key={c.id} value={c.nome}>{c.icone} {c.nome}</option>)}
                     </select>
+                    <button type="button" onClick={() => setShowNewCategoryForm(v => !v)} className="w-full mt-2 bg-blue-50 text-blue-700 border border-blue-200 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-100 transition-all active:scale-95">
+                      {showNewCategoryForm ? 'Fechar Cadastro de Categoria' : 'Cadastrar Nova Categoria'}
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Preço Unitário</label>
+                    <input type="number" min={0} step="0.01" className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100" value={newItemPrice} onChange={e => setNewItemPrice(Number(e.target.value))} />
                   </div>
                 </div>
+                {showNewCategoryForm && (
+                  <div className="bg-gray-50 border border-gray-100 rounded-3xl p-5 space-y-4">
+                    <h3 className="text-xs font-black uppercase tracking-widest text-gray-500">Adicionar Categoria</h3>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <input type="text" placeholder="Nome" className="bg-white px-4 py-3 rounded-2xl border border-gray-200 text-sm font-black text-gray-900 outline-none focus:ring-4 focus:ring-blue-100" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} />
+                        <input type="text" placeholder="Ícone (ex: 🍞)" className="bg-white px-4 py-3 rounded-2xl border border-gray-200 text-sm font-black text-gray-900 outline-none focus:ring-4 focus:ring-blue-100" value={newCategoryIcon} onChange={e => setNewCategoryIcon(e.target.value)} />
+                        <input type="color" className="w-full h-12 bg-white p-2 rounded-2xl border border-gray-200" value={newCategoryColor} onChange={e => setNewCategoryColor(e.target.value)} />
+                      </div>
+                      <button type="button" onClick={handleAddCategory} className="w-full bg-gray-900 text-white py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all active:scale-95">
+                        Salvar Categoria
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <button type="submit" className="w-full bg-blue-600 text-white py-6 rounded-[2rem] font-black text-lg shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 uppercase tracking-widest">Adicionar Agora</button>
               </form>
             </div>
@@ -473,14 +641,50 @@ export default function App() {
                     <button onClick={() => handleToggleStatus(it.id)} className="w-10 h-10 rounded-[1.2rem] border-4 border-blue-50 hover:bg-blue-50 transition-colors flex items-center justify-center bg-gray-50"></button>
                     <div>
                       <h3 className="font-black text-gray-900 text-lg leading-tight">{it.nome}</h3>
-                      <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mt-1">{it.quantidade}x • {it.categoria}</p>
+                      <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mt-1">
+                        {it.quantidade}x • {it.categoria} • R$ {Number(it.precoEstimado || 0).toFixed(2)}
+                      </p>
                     </div>
                   </div>
-                  <button onClick={() => handleRemoveItem(it.id)} className="p-4 text-gray-200 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 active:scale-90">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                  </button>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <button onClick={() => handleStartEditItem(it)} className="p-3 text-gray-300 hover:text-blue-600 active:scale-90">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                    </button>
+                    <button onClick={() => handleRemoveItem(it.id)} className="p-3 text-gray-300 hover:text-red-500 active:scale-90">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    </button>
+                  </div>
                 </div>
               ))}
+              {editingItemId !== null && (
+                <div className="bg-white p-6 rounded-[2.5rem] border-2 border-blue-200 shadow-lg space-y-4">
+                  <h3 className="font-black text-sm uppercase tracking-widest text-blue-600">Editar Item</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-gray-400 uppercase ml-2 tracking-widest">Nome</label>
+                      <input type="text" className="w-full bg-gray-50 px-5 py-4 rounded-2xl font-black outline-none border border-gray-100 text-gray-900 focus:ring-4 focus:ring-blue-100" placeholder="Nome do item" value={editName} onChange={e => setEditName(e.target.value)} />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-gray-400 uppercase ml-2 tracking-widest">Categoria</label>
+                      <select className="w-full bg-gray-50 px-5 py-4 rounded-2xl font-black outline-none border border-gray-100 text-gray-900 focus:ring-4 focus:ring-blue-100" value={editCat} onChange={e => setEditCat(e.target.value)}>
+                        {categories.map(c => <option key={c.id} value={c.nome}>{c.icone} {c.nome}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-gray-400 uppercase ml-2 tracking-widest">Quantidade</label>
+                      <input type="number" min={1} className="w-full bg-gray-50 px-5 py-4 rounded-2xl font-black outline-none border border-gray-100 text-gray-900 focus:ring-4 focus:ring-blue-100" placeholder="Ex: 2" value={editQtd} onChange={e => setEditQtd(Number(e.target.value))} />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-gray-400 uppercase ml-2 tracking-widest">Valor Unitário (R$)</label>
+                      <input type="number" min={0} step="0.01" className="w-full bg-gray-50 px-5 py-4 rounded-2xl font-black outline-none border border-gray-100 text-gray-900 focus:ring-4 focus:ring-blue-100" placeholder="Ex: 12.50" value={editPrice} onChange={e => setEditPrice(Number(e.target.value))} />
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button type="button" onClick={handleSaveEditItem} className="flex-1 bg-blue-600 text-white py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95">Salvar Alterações</button>
+                    <button type="button" onClick={handleCancelEditItem} className="flex-1 bg-gray-200 text-gray-800 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-gray-300 transition-all active:scale-95">Cancelar</button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -563,6 +767,9 @@ export default function App() {
                        <span className="font-black text-gray-400 text-xs tracking-widest">R$ {Number(it.total).toFixed(2)}</span>
                      </div>
                    ))}
+                   <button onClick={() => handleReloadFromHistory(p.id)} className="w-full mt-2 bg-purple-100 text-purple-700 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-purple-200 transition-all active:scale-95">
+                     Carregar Esta Compra Na Lista
+                   </button>
                  </div>
                </div>
              ))}
