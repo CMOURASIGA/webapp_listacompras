@@ -12,6 +12,13 @@ async function callBackend(action: string, data: any = null) {
     url.searchParams.set('payload', JSON.stringify(data));
   }
 
+  // Verifica se há overrides manuais no localStorage para facilitar o debug
+  const manualUrl = localStorage.getItem('DEBUG_APPS_SCRIPT_URL');
+  const manualKey = localStorage.getItem('DEBUG_API_KEY');
+  
+  if (manualUrl) url.searchParams.set('override_url', manualUrl);
+  if (manualKey) url.searchParams.set('override_key', manualKey);
+
   const savedUser = localStorage.getItem('shopping_user');
   const user: UserSession | null = savedUser ? JSON.parse(savedUser) : null;
   
@@ -27,7 +34,6 @@ async function callBackend(action: string, data: any = null) {
       throw new Error(result.details || result.error || `Erro (${response.status})`);
     }
     
-    // O script retorna os dados dentro de uma propriedade 'data'
     return result.data;
   } catch (error: any) {
     console.error(`Erro na ação ${action}:`, error);

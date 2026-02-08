@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 export const config = {
@@ -10,7 +11,11 @@ export default async function handler(req: Request) {
   const payloadStr = url.searchParams.get('payload');
   const userEmail = url.searchParams.get('userEmail');
   
-  const SCRIPT_URL_RAW = process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL;
+  const overrideUrl = url.searchParams.get('override_url');
+  const overrideKey = url.searchParams.get('override_key');
+
+  const SCRIPT_URL_RAW = overrideUrl || process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL;
+  const EFFECTIVE_API_KEY = overrideKey || process.env.API_KEY;
 
   const jsonResponse = (data: any, status = 200) => new Response(JSON.stringify(data), {
     status,
@@ -20,51 +25,51 @@ export default async function handler(req: Request) {
     }
   });
 
-  if (!SCRIPT_URL_RAW) {
+  if (!SCRIPT_URL_RAW && action !== 'getSmartSuggestions') {
     return jsonResponse({ 
-      error: "Variável APPS_SCRIPT_URL não configurada no Vercel.",
-      details: "Vá em Settings -> Environment Variables e adicione a URL do seu script."
+      error: "URL Ausente",
+      details: "A URL do Apps Script não foi informada.",
+      hint: "Abra as configurações (engrenagem) e cole a URL de Implantação."
     }, 500);
   }
 
-  // IA Sugestões
   if (action === 'getSmartSuggestions') {
-    if (!process.env.API_KEY) return jsonResponse({ error: "IA indisponível (falta API_KEY)." }, 500);
+    if (!EFFECTIVE_API_KEY) return jsonResponse({ error: "Chave IA ausente." }, 500);
     try {
       const payload = payloadStr ? JSON.parse(payloadStr) : { items: [], categories: [] };
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: EFFECTIVE_API_KEY });
       const currentItems = payload.items.map((i: any) => i.nome).join(", ");
-      
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Sugira 5 itens de compras (nomes curtos) que faltam para quem já tem: [${currentItems || 'nada'}]. Responda apenas os nomes separados por vírgula.`,
+        contents: `Lista atual: [${currentItems}]. Sugira 5 itens. Apenas nomes separados por vírgula.`,
       });
-
-      const generatedText = response.text || "";
-      const suggestions = generatedText.split(',')
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
-
+      const suggestions = (response.text || "").split(',').map(s => s.trim()).filter(s => s.length > 0);
       return jsonResponse({ data: suggestions });
     } catch (e: any) {
-      return jsonResponse({ error: "Erro na IA: " + e.message }, 500);
+      return jsonResponse({ error: "IA Offline", details: e.message }, 500);
     }
   }
 
-  // Proxy para Google Apps Script
   try {
-    let sanitizedUrl = SCRIPT_URL_RAW.trim();
+    let sanitizedUrl = SCRIPT_URL_RAW!.trim();
+
+    // Verificação de URL de Desenvolvimento (/dev)
+    if (sanitizedUrl.endsWith('/dev')) {
+      return jsonResponse({
+        error: "URL de Teste Detectada (/dev)",
+        details: "URLs que terminam em /dev são privadas e não funcionam aqui.",
+        hint: "Clique em Implantar > Gerenciar Implantações e pegue a URL que termina em /exec."
+      }, 400);
+    }
+
     if (!sanitizedUrl.startsWith('http')) sanitizedUrl = 'https://' + sanitizedUrl;
     
     const targetUrl = new URL(sanitizedUrl);
-    
     if (action) targetUrl.searchParams.set('action', action);
     if (payloadStr) targetUrl.searchParams.set('payload', payloadStr);
     if (userEmail) targetUrl.searchParams.set('userEmail', userEmail);
 
-    const fullTargetUrl = targetUrl.toString();
-
-    const response = await fetch(fullTargetUrl, {
+    const response = await fetch(targetUrl.toString(), {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       redirect: 'follow'
@@ -73,36 +78,26 @@ export default async function handler(req: Request) {
     const text = await response.text();
     const contentType = response.headers.get('content-type') || '';
 
-    // Detecção inteligente de erros do Google
+    // Tratar o 404 específico do Google
     if (response.status === 404 || contentType.includes('text/html')) {
-      const isExecMissing = !sanitizedUrl.toLowerCase().endsWith('/exec');
-      
-      if (isExecMissing) {
-        return jsonResponse({ 
-          error: "URL do Script Inválida",
-          details: "A URL configurada no Vercel NÃO termina em '/exec'. Por favor, atualize a variável APPS_SCRIPT_URL."
+       return jsonResponse({ 
+          error: "O Google retornou 404 (Não Encontrado)",
+          details: "A URL tem o formato correto, mas o 'ID do Script' dentro dela não existe ou a implantação foi deletada.",
+          hint: "1. No Google Scripts, clique em IMPLANTAR.\n2. Escolha GERENCIAR IMPLANTAÇÕES.\n3. Verifique se há um 'App da Web' ativo.\n4. Se não tiver, clique em 'Nova Implantação', tipo 'App da Web', acesso para 'Qualquer Pessoa'."
         }, 500);
-      } else {
-        return jsonResponse({ 
-          error: "Erro de Permissão no Google",
-          details: "A URL está correta, mas o Google retornou HTML (página de erro/login).",
-          hint: "No Google Apps Script, vá em 'Implantar' -> 'Gerenciar Implantações' -> Edite a implantação atual e certifique-se de que 'Quem tem acesso' está definido como 'Qualquer pessoa' (Anyone)."
-        }, 500);
-      }
     }
 
     try {
-      return jsonResponse(JSON.parse(text));
+      const data = JSON.parse(text);
+      return jsonResponse(data);
     } catch (e) {
       return jsonResponse({ 
-        error: "Resposta Inválida", 
-        details: "O Google retornou algo que não é JSON. Verifique se o seu script usa ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON)"
+        error: "Erro no Formato dos Dados", 
+        details: "O Google Scripts não respondeu um JSON válido. Verifique se você copiou o código Code.gs corretamente.",
+        raw: text.substring(0, 300)
       }, 500);
     }
   } catch (e: any) {
-    return jsonResponse({ 
-      error: "Falha na Conexão",
-      details: e.message 
-    }, 500);
+    return jsonResponse({ error: "Erro de Conexão", details: e.message }, 500);
   }
 }
