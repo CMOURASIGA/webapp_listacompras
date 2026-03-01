@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession, AIProvider, AppSettings } from './types';
 import { api } from './services/api';
 import { generateSuggestions as generateAISuggestions } from './services/ai/aiService';
@@ -537,6 +537,82 @@ const AppHeader = ({
 }) => {
   const statusText = isOnline ? 'Sincronizado' : 'Offline';
   const statusClass = isOnline ? 'text-emerald-600' : 'text-amber-600';
+  const tabsContainerRef = useRef<HTMLElement | null>(null);
+  const [showTabsOverflowHint, setShowTabsOverflowHint] = useState(false);
+  const tabRefs = useRef<Record<TabKey, HTMLButtonElement | null>>({
+    lista: null,
+    carrinho: null,
+    historico: null
+  });
+
+  const updateTabsOverflowHint = useCallback(() => {
+    const tabsEl = tabsContainerRef.current;
+    if (!tabsEl) return;
+
+    const hasOverflow = tabsEl.scrollWidth > tabsEl.clientWidth + 1;
+    const canScrollRight = tabsEl.scrollLeft + tabsEl.clientWidth < tabsEl.scrollWidth - 1;
+    setShowTabsOverflowHint(hasOverflow && canScrollRight);
+  }, []);
+
+  const scrollActiveTabIntoView = useCallback(
+    (behavior: ScrollBehavior = 'smooth') => {
+      if (typeof window === 'undefined') return;
+      if (!window.matchMedia('(max-width: 767px)').matches) return;
+      tabRefs.current[activeTab]?.scrollIntoView({
+        behavior,
+        inline: 'center',
+        block: 'nearest'
+      });
+    },
+    [activeTab]
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const tabsEl = tabsContainerRef.current;
+    if (!tabsEl) return;
+
+    const handleUpdate = () => updateTabsOverflowHint();
+    handleUpdate();
+
+    tabsEl.addEventListener('scroll', handleUpdate, { passive: true });
+    window.addEventListener('resize', handleUpdate);
+    return () => {
+      tabsEl.removeEventListener('scroll', handleUpdate);
+      window.removeEventListener('resize', handleUpdate);
+    };
+  }, [updateTabsOverflowHint]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const frameId = window.requestAnimationFrame(() => updateTabsOverflowHint());
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeTab, listaCount, carrinhoCount, updateTabsOverflowHint]);
+
+  useEffect(() => {
+    scrollActiveTabIntoView('smooth');
+    const timeoutId = window.setTimeout(() => updateTabsOverflowHint(), 260);
+    return () => window.clearTimeout(timeoutId);
+  }, [activeTab, scrollActiveTabIntoView, updateTabsOverflowHint]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.matchMedia('(max-width: 767px)').matches) return;
+
+    let raf2 = 0;
+    const raf1 = window.requestAnimationFrame(() => {
+      scrollActiveTabIntoView('auto');
+      raf2 = window.requestAnimationFrame(() => scrollActiveTabIntoView('auto'));
+    });
+    const timeoutId = window.setTimeout(() => scrollActiveTabIntoView('auto'), 220);
+
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      if (raf2) window.cancelAnimationFrame(raf2);
+      window.clearTimeout(timeoutId);
+    };
+  }, [scrollActiveTabIntoView]);
+
   const tabClass = (tab: TabKey) => {
     if (activeTab !== tab) return 'text-gray-400 hover:text-gray-600';
     if (tab === 'lista') return 'text-blue-600';
@@ -604,22 +680,30 @@ const AppHeader = ({
           </div>
         </div>
 
-        <nav className="flex md:hidden mt-3 border border-gray-100 rounded-2xl overflow-x-auto">
-          {(['lista', 'carrinho', 'historico'] as TabKey[]).map((tab) => {
-            const label = tab === 'lista' ? `Lista (${listaCount})` : tab === 'carrinho' ? `Carrinho (${carrinhoCount})` : 'Historico';
-            const active = activeTab === tab;
-            return (
-              <button
-                key={tab}
-                onClick={() => onChangeTab(tab)}
-                className={`min-w-[150px] flex-1 py-3 px-3 font-black text-[10px] uppercase tracking-widest relative transition-all whitespace-nowrap ${active ? tabClass(tab) : 'text-gray-400'}`}
-              >
-                {label}
-                {active && <span className={`absolute bottom-0 left-3 right-3 h-1 rounded-t-full ${indicatorClass(tab)}`} />}
-              </button>
-            );
-          })}
-        </nav>
+        <div className="relative md:hidden mt-3">
+          <nav ref={tabsContainerRef} className="tabs-container border border-gray-100 rounded-2xl bg-white">
+            {(['lista', 'carrinho', 'historico'] as TabKey[]).map((tab) => {
+              const label = tab === 'lista' ? `Lista (${listaCount})` : tab === 'carrinho' ? `Carrinho (${carrinhoCount})` : 'Historico';
+              const active = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  ref={(el) => {
+                    tabRefs.current[tab] = el;
+                  }}
+                  onClick={() => onChangeTab(tab)}
+                  className={`tab py-3 font-black text-[10px] uppercase tracking-widest relative transition-all whitespace-nowrap ${active ? tabClass(tab) : 'text-gray-400'}`}
+                >
+                  {label}
+                  {active && <span className={`absolute bottom-0 left-3 right-3 h-1 rounded-t-full ${indicatorClass(tab)}`} />}
+                </button>
+              );
+            })}
+          </nav>
+          {showTabsOverflowHint && (
+            <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-white via-white/85 to-transparent rounded-r-2xl" />
+          )}
+        </div>
       </header>
     </>
   );

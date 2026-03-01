@@ -9,8 +9,8 @@
     <meta name="apple-mobile-web-app-title" content="Shopping Pro">
     <title>Lista de Compras Pro</title>
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32-v2.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-v2.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -21,6 +21,20 @@
         .tab-active-purple { border-bottom: 3px solid #a855f7; color: #a855f7; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .tabs-container {
+            display: flex;
+            overflow-x: auto;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+        }
+        .tabs-container::-webkit-scrollbar {
+            display: none;
+        }
+        .tab {
+            flex: 0 0 auto;
+            min-width: max-content;
+            padding: 0 16px;
+        }
         
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
