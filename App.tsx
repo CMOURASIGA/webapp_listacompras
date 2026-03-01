@@ -551,13 +551,18 @@ const AppHeader = ({
 
   return (
     <>
-      <header className="bg-white/90 backdrop-blur-xl border-b border-gray-100 px-3 sm:px-6 py-3 sm:py-4 sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-11 h-11 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-blue-100">L</div>
+      <header className="bg-white/90 backdrop-blur-xl border-b border-gray-100 px-3 sm:px-6 py-3 sm:py-4 sticky top-0 z-50 overflow-x-clip">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 sm:gap-4 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+            <div className="w-10 h-10 min-w-[40px] min-h-[40px] shrink-0 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-xl shadow-blue-100">L</div>
             <div className="min-w-0">
-              <h1 className="font-black text-gray-900 text-lg sm:text-xl tracking-tight truncate">Shopping Pro</h1>
-              <p className={`text-[9px] font-black uppercase tracking-widest ${statusClass}`}>{statusText}</p>
+              <h1 className="font-black text-gray-900 text-base sm:text-xl tracking-tight whitespace-nowrap overflow-hidden text-ellipsis max-w-[120px] sm:max-w-[220px] md:max-w-none">
+                Shopping Pro
+              </h1>
+              <p className="text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                <span className={`hidden sm:inline ${statusClass}`}>{statusText}</span>
+              </p>
             </div>
           </div>
 
@@ -573,15 +578,28 @@ const AppHeader = ({
             </button>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            <button onClick={onOpenHelp} className="px-2.5 sm:px-4 py-2 min-h-[44px] rounded-xl border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all whitespace-nowrap">
-              ❓ Ajuda
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={onOpenHelp}
+              aria-label="Abrir ajuda"
+              className="px-2 sm:px-4 py-2 min-h-[40px] sm:min-h-[44px] rounded-xl border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all whitespace-nowrap inline-flex items-center justify-center gap-1"
+            >
+              <span>❓</span>
+              <span className="hidden sm:inline">Ajuda</span>
             </button>
-            <button onClick={onOpenSettings} className="px-2.5 sm:px-3 py-2 min-h-[44px] rounded-xl border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all whitespace-nowrap">
-              ⚙️ Config
+            <button
+              onClick={onOpenSettings}
+              aria-label="Abrir configurações"
+              className="px-2 sm:px-3 py-2 min-h-[40px] sm:min-h-[44px] rounded-xl border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all whitespace-nowrap inline-flex items-center justify-center gap-1"
+            >
+              <span>⚙️</span>
+              <span className="hidden sm:inline">Config</span>
             </button>
-            <button onClick={onLogout} className="group relative">
-              <img src={user?.picture} className="w-11 h-11 rounded-2xl border-4 border-white shadow-md group-hover:ring-4 group-hover:ring-blue-50 transition-all" />
+            <button onClick={onLogout} className="group relative shrink-0" aria-label="Sair">
+              <img
+                src={user?.picture}
+                className="w-10 h-10 min-w-[40px] min-h-[40px] shrink-0 rounded-full object-cover border-2 border-white shadow-md group-hover:ring-4 group-hover:ring-blue-50 transition-all"
+              />
             </button>
           </div>
         </div>
@@ -1201,6 +1219,7 @@ export default function App() {
 
   const handleSaveControlSettings = (next: AppSettings) => {
     updateSettings(next);
+    showToast('Configurações salvas com sucesso.', 'success');
   };
 
   const navigateTo = (path: '/' | '/help') => {
