@@ -218,6 +218,14 @@ function getCurrentUserEmail(userEmailHint) {
     return REQUEST_CONTEXT.resolvedEmail;
   }
 
+  // Prioriza o e-mail vindo do app (usuário autenticado no frontend).
+  // Isso evita cair no "effective user" da implantação e gravar em planilha de outra conta.
+  const hintedEmail = normalizeEmail(userEmailHint || REQUEST_CONTEXT.userEmailHint);
+  if (hintedEmail) {
+    REQUEST_CONTEXT.resolvedEmail = hintedEmail;
+    return hintedEmail;
+  }
+
   let email = "";
 
   try {
@@ -228,14 +236,6 @@ function getCurrentUserEmail(userEmailHint) {
     try {
       email = Session.getEffectiveUser().getEmail() || "";
     } catch (err) {}
-  }
-
-  if (!email && userEmailHint) {
-    email = userEmailHint;
-  }
-
-  if (!email && REQUEST_CONTEXT.userEmailHint) {
-    email = REQUEST_CONTEXT.userEmailHint;
   }
 
   email = normalizeEmail(email);
@@ -672,14 +672,14 @@ function adicionarItem(nome, quantidade, categoria, precoEstimado) {
 
 function editarItem(id, nome, quantidade, categoria, precoEstimado) {
   if (!id) {
-    return { sucesso: false, error: "ID do item é obrigatório" };
+    throw new Error("ID do item é obrigatório");
   }
 
   const ctx = readSheetRows(ABAS.LISTA, HEADERS.LISTA);
   const idx = findRowIndexById(ctx.values, ctx.headerOffset, id);
 
   if (idx === -1) {
-    return { sucesso: false, error: "Item não encontrado" };
+    throw new Error("Item não encontrado");
   }
 
   const rowNumber = idx + 1;
@@ -705,14 +705,14 @@ function editarItem(id, nome, quantidade, categoria, precoEstimado) {
 
 function marcarComoComprado(id) {
   if (!id) {
-    return { sucesso: false, error: "ID do item é obrigatório" };
+    throw new Error("ID do item é obrigatório");
   }
 
   const ctx = readSheetRows(ABAS.LISTA, HEADERS.LISTA);
   const idx = findRowIndexById(ctx.values, ctx.headerOffset, id);
 
   if (idx === -1) {
-    return { sucesso: false, error: "Item não encontrado" };
+    throw new Error("Item não encontrado");
   }
 
   const rowNumber = idx + 1;
@@ -726,14 +726,14 @@ function marcarComoComprado(id) {
 
 function removerItem(id) {
   if (!id) {
-    return { sucesso: false, error: "ID do item é obrigatório" };
+    throw new Error("ID do item é obrigatório");
   }
 
   const ctx = readSheetRows(ABAS.LISTA, HEADERS.LISTA);
   const idx = findRowIndexById(ctx.values, ctx.headerOffset, id);
 
   if (idx === -1) {
-    return { sucesso: false, error: "Item não encontrado" };
+    throw new Error("Item não encontrado");
   }
 
   ctx.sheet.deleteRow(idx + 1);
@@ -850,7 +850,7 @@ function obterHistorico() {
 
 function carregarListaDoHistorico(idCompra) {
   if (!idCompra) {
-    return { sucesso: false, error: "ID da compra é obrigatório" };
+    throw new Error("ID da compra é obrigatório");
   }
 
   const histCtx = readSheetRows(ABAS.HISTORICO, HEADERS.HISTORICO);
@@ -948,3 +948,4 @@ function getNextCategoryId(rows) {
   });
   return maxId + 1;
 }
+

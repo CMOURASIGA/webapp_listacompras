@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
           target: scriptUrl.origin,
           changeOrigin: true,
           secure: true,
+          followRedirects: true,
           rewrite: (path) => scriptUrl.pathname + path.replace(/^\/api/, '')
         }
       }

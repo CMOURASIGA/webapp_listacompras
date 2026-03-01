@@ -66,7 +66,7 @@ const DiagnosticModal = ({ isOpen, onClose, onRefresh }: { isOpen: boolean, onCl
 
       const response = await fetch(url.toString(), {
         cache: 'no-store',
-        credentials: useDirectScript ? 'include' : 'same-origin'
+        credentials: useDirectScript ? 'omit' : 'same-origin'
       });
       const status = response.status;
       const text = await response.text();
@@ -238,8 +238,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'lista' | 'carrinho' | 'historico'>('lista');
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [itemsLoaded, setItemsLoaded] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [historyData, setHistoryData] = useState<{ compras: PurchaseGroup[], stats: DashboardStats } | null>(null);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -268,9 +270,21 @@ export default function App() {
 
   useEffect(() => { if (user) fetchInitialData(); }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    if ((activeTab === 'lista' || activeTab === 'carrinho') && !itemsLoaded) {
+      fetchItems();
+    }
+  }, [activeTab, user, itemsLoaded]);
+
   const fetchInitialData = async () => {
     setLoading(true);
     try {
+      setItems([]);
+      setItemsLoaded(false);
+      setHistoryData(null);
+      setHistoryLoaded(false);
+
       const bootstrap = await api.bootstrap();
       if (bootstrap?.spreadsheetId) {
         localStorage.setItem('shopping_spreadsheet_id', bootstrap.spreadsheetId);
@@ -282,22 +296,16 @@ export default function App() {
         showToast('Planilha criada automaticamente para sua conta.', 'success');
       }
 
-      const [cats, initialItems] = await Promise.all([
-        api.getCategories(),
-        api.getItems()
-      ]);
+      const cats = await api.getCategories();
       setCategories(cats);
-      setItems(initialItems);
-      if (editingItemId !== null && !initialItems.some(i => i.id === editingItemId)) {
-        handleCancelEditItem();
-      }
       setNewItemCat(cats[0]?.nome || '');
-      if (!cats.length || !initialItems.length) {
-        showToast('Nenhum dado encontrado na planilha.', 'info');
+      if (!cats.length) {
+        showToast('Nenhuma categoria encontrada na planilha.', 'info');
       }
     } catch (e: any) {
       setCategories([]);
       setItems([]);
+      setItemsLoaded(false);
       setNewItemCat('');
       showToast(e?.message || 'Erro ao carregar dados da planilha', 'error');
     } finally {
@@ -305,17 +313,36 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    if (activeTab === 'historico' && user) fetchHistory();
-  }, [activeTab, user]);
+  const fetchItems = async () => {
+    setLoading(true);
+    try {
+      const loadedItems = await api.getItems();
+      setItems(loadedItems);
+      setItemsLoaded(true);
+      if (editingItemId !== null && !loadedItems.some(i => i.id === editingItemId)) {
+        handleCancelEditItem();
+      }
+      if (!loadedItems.length) {
+        showToast('Nenhum item encontrado na lista atual.', 'info');
+      }
+    } catch (e: any) {
+      setItems([]);
+      setItemsLoaded(false);
+      showToast(e?.message || 'Erro ao carregar itens da planilha', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchHistory = async () => {
     setLoading(true);
     try {
       const data = await api.getHistory();
       setHistoryData(data);
+      setHistoryLoaded(true);
     } catch (e: any) {
       setHistoryData({ compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } });
+      setHistoryLoaded(true);
       showToast(e?.message || 'Erro ao carregar histórico da planilha', 'error');
     } finally {
       setLoading(false);
@@ -328,6 +355,10 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('shopping_user');
+    setItems([]);
+    setItemsLoaded(false);
+    setHistoryData(null);
+    setHistoryLoaded(false);
     setUser(null);
   };
 
@@ -342,6 +373,7 @@ export default function App() {
       await api.addItem({ nome: newItemName, quantidade: newItemQtd, categoria: newItemCat, precoEstimado: newItemPrice });
       const updated = await api.getItems();
       setItems(updated);
+      setItemsLoaded(true);
       setNewItemName(''); setNewItemQtd(1); setNewItemPrice(0);
       showToast('Item adicionado!', 'success');
     } catch (e: any) {
@@ -354,10 +386,28 @@ export default function App() {
   const handleToggleStatus = async (id: string | number) => {
     setLoading(true);
     try {
+      const beforeStatus = items.find(i => String(i.id) === String(id))?.status;
       await api.toggleStatus(id);
-      const refreshed = await api.getItems();
+      let refreshed = await api.getItems();
+      let afterStatus = refreshed.find(i => String(i.id) === String(id))?.status;
+
+      // Em alguns cenários a primeira leitura pode voltar sem atualização imediata.
+      if (beforeStatus && afterStatus === beforeStatus) {
+        refreshed = await api.getItems();
+        afterStatus = refreshed.find(i => String(i.id) === String(id))?.status;
+      }
+
+      if (beforeStatus && afterStatus === beforeStatus) {
+        throw new Error('Não foi possível mover o item entre lista e carrinho. Tente novamente.');
+      }
       setItems(refreshed);
+      setItemsLoaded(true);
       if (editingItemId === id) handleCancelEditItem();
+      if (afterStatus === 'comprado') {
+        showToast('Item movido para o carrinho.', 'success');
+      } else if (afterStatus === 'pendente') {
+        showToast('Item voltou para a lista.', 'info');
+      }
     } catch (e: any) {
       showToast(e?.message || 'Erro ao atualizar status no servidor', 'error');
     } finally {
@@ -372,6 +422,7 @@ export default function App() {
       await api.removeItem(id);
       const refreshed = await api.getItems();
       setItems(refreshed);
+      setItemsLoaded(true);
       if (editingItemId === id) handleCancelEditItem();
     } catch (e: any) {
       showToast(e?.message || 'Erro ao remover item na planilha', 'error');
@@ -413,6 +464,7 @@ export default function App() {
       });
       const refreshed = await api.getItems();
       setItems(refreshed);
+      setItemsLoaded(true);
       handleCancelEditItem();
       showToast('Item atualizado!', 'success');
     } catch (e: any) {
@@ -465,7 +517,9 @@ export default function App() {
         api.getHistory()
       ]);
       setItems(updatedItems);
+      setItemsLoaded(true);
       setHistoryData(updatedHistory);
+      setHistoryLoaded(true);
       setActiveTab('lista');
       showToast('Itens carregados do histórico para a lista.', 'success');
     } catch (e: any) {
@@ -482,9 +536,10 @@ export default function App() {
       await api.finalizePurchase();
       const updated = await api.getItems();
       setItems(updated);
-      const updatedHistory = await api.getHistory();
-      setHistoryData(updatedHistory);
-      showToast('Finalizado!', 'success');
+      setItemsLoaded(true);
+      setHistoryLoaded(false);
+      setHistoryData(null);
+      showToast('Finalizado! Clique em "Carregar Histórico" para atualizar os dados.', 'success');
       setActiveTab('historico');
     } catch (e: any) {
       showToast(e?.message || 'Erro ao finalizar compra na planilha', 'error');
@@ -524,6 +579,7 @@ export default function App() {
   const pendingItems = items.filter(i => i.status === 'pendente' && (catFilter === 'todos' || i.categoria === catFilter));
   const boughtItems = items.filter(i => i.status === 'comprado');
   const cartTotal = boughtItems.reduce((acc, curr) => acc + (curr.precoEstimado * curr.quantidade), 0);
+  const effectiveHistory = historyData || { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
 
   return (
     <div className="max-w-4xl mx-auto pb-24 min-h-screen flex flex-col bg-gray-50">
@@ -726,26 +782,37 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'historico' && historyData && (
+        {activeTab === 'historico' && (
           <div className="space-y-6 animate-fade-in">
+            {!historyLoaded && (
+              <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-sm text-center">
+                <p className="text-gray-500 text-xs font-black uppercase tracking-widest mb-5">Histórico sob demanda</p>
+                <button onClick={fetchHistory} className="bg-purple-600 text-white py-4 px-8 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-purple-700 transition-all active:scale-95">
+                  Carregar Histórico
+                </button>
+              </div>
+            )}
+
+            {historyLoaded && (
+              <>
              <div className="grid grid-cols-2 gap-4">
                 <div className="bg-purple-600 p-8 rounded-[3rem] text-white shadow-2xl">
                   <p className="text-purple-100 text-[9px] font-black uppercase tracking-widest opacity-70">Gasto Acumulado</p>
-                  <h2 className="text-3xl font-black mt-2 tracking-tighter">R$ {Number(historyData.stats.totalGasto).toFixed(2)}</h2>
+                  <h2 className="text-3xl font-black mt-2 tracking-tighter">R$ {Number(effectiveHistory.stats.totalGasto).toFixed(2)}</h2>
                 </div>
                 <div className="bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm flex flex-col justify-center">
                   <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest">Categoria Top</p>
-                  <h2 className="text-xl font-black mt-2 text-gray-900 truncate tracking-tight">{historyData.stats.categoriaFavorita || 'Sem Dados'}</h2>
+                  <h2 className="text-xl font-black mt-2 text-gray-900 truncate tracking-tight">{effectiveHistory.stats.categoriaFavorita || 'Sem Dados'}</h2>
                 </div>
              </div>
              
-             {historyData.compras.length === 0 && (
+             {effectiveHistory.compras.length === 0 && (
                 <div className="text-center py-20">
                   <p className="text-gray-300 font-black uppercase text-[10px] tracking-widest">Nenhuma compra registrada</p>
                 </div>
              )}
              
-             {historyData.compras.map(p => (
+             {effectiveHistory.compras.map(p => (
                <div key={p.id} className="bg-white rounded-[3rem] border border-gray-100 overflow-hidden shadow-xl group hover:border-purple-200 transition-all">
                  <div className="p-8 bg-gray-50 flex justify-between items-center border-b border-gray-100 text-gray-900">
                    <div>
@@ -773,6 +840,8 @@ export default function App() {
                  </div>
                </div>
              ))}
+             </>
+            )}
           </div>
         )}
       </main>
