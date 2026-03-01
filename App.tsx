@@ -1228,7 +1228,15 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
       <div className="bg-white p-8 sm:p-12 rounded-[3rem] sm:rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center border border-white">
         <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center text-white font-black text-5xl shadow-xl mx-auto mb-8 border-4 border-white">L</div>
         <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tighter">Shopping Pro</h1>
-        <p className="text-gray-400 mb-12 font-bold uppercase text-[10px] tracking-[0.3em]">Gestão Inteligente</p>
+        <p className="text-gray-400 mb-4 font-bold uppercase text-[10px] tracking-[0.3em]">Gestão Inteligente</p>
+        <p className="hidden sm:block text-sm font-semibold text-gray-600 leading-relaxed mb-8">
+          Organize suas compras de forma simples e inteligente.
+          <br />
+          Com o Shopping Pro, você cria listas, acompanha seus hábitos de consumo e facilita o dia a dia com tudo sob controle.
+        </p>
+        <p className="sm:hidden text-sm font-semibold text-gray-600 leading-relaxed mb-8">
+          Organize suas compras de forma simples e inteligente.
+        </p>
         
         <div className="space-y-4">
           {hasClientId && <div className="flex justify-center" id="googleBtn"></div>}
