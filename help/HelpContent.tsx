@@ -156,28 +156,6 @@ export default function HelpContent({ guide, onOpenDeepLink }: HelpContentProps)
         </div>
       )}
 
-      {guide.overviewMock && (
-        <div className="mt-6 border border-dashed border-blue-300 rounded-3xl bg-gradient-to-br from-blue-50 to-indigo-50 p-4 sm:p-6">
-          <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-2">
-            Imagem mockada
-          </p>
-          <div className="relative h-36 sm:h-44 rounded-2xl bg-white border border-blue-200 shadow-inner">
-            <div className="absolute inset-x-3 top-3 h-3 rounded bg-gray-200" />
-            <div className="absolute inset-x-3 top-8 h-3 rounded bg-gray-200" />
-            <div className="absolute inset-x-3 top-13 h-3 rounded bg-gray-200" />
-            <span className="absolute bottom-2 left-2 px-2 py-1 rounded-lg bg-amber-300/95 text-[9px] font-black uppercase tracking-widest text-amber-950 border border-amber-400 shadow">
-              {guide.overviewMock.caption}
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {guide.overviewMock.highlights.map((item) => (
-              <span key={item} className="px-2.5 py-1 rounded-full bg-white border border-blue-200 text-[10px] font-black uppercase tracking-wider text-blue-700">
-                {item}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
     </main>
   );
 }
