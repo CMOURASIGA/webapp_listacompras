@@ -23,7 +23,18 @@ const highlightMap: Record<string, HighlightRect> = {
   save: { top: 70, left: 58, width: 30, height: 20, label: 'Salvar' },
   'ask-ai': { top: 10, left: 58, width: 30, height: 20, label: 'Pedir IA' },
   cart: { top: 8, left: 38, width: 24, height: 14, label: 'Carrinho' },
-  history: { top: 8, left: 64, width: 28, height: 14, label: 'Histórico' }
+  history: { top: 8, left: 64, width: 28, height: 14, label: 'Histórico' },
+  'swipe-right-cart': { top: 48, left: 6, width: 42, height: 18, label: 'Swipe direita' },
+  'swipe-left-delete': { top: 48, left: 52, width: 42, height: 18, label: 'Swipe esquerda' },
+  'delete-confirm-modal': { top: 22, left: 18, width: 64, height: 44, label: 'Confirmação' },
+  'sum-quantity': { top: 62, left: 24, width: 52, height: 14, label: 'Somar quantidade' },
+  'favorite-star': { top: 50, left: 78, width: 14, height: 14, label: 'Favoritar' },
+  'favorites-filter': { top: 24, left: 58, width: 34, height: 14, label: 'Filtro favoritos' },
+  'market-mode': { top: 14, left: 56, width: 36, height: 12, label: 'Modo mercado' },
+  'checklist-item': { top: 46, left: 8, width: 84, height: 18, label: 'Checklist rápido' },
+  'share-button': { top: 24, left: 50, width: 40, height: 14, label: 'Compartilhar lista' },
+  'share-text': { top: 46, left: 8, width: 84, height: 30, label: 'Texto para WhatsApp' },
+  'item-actions': { top: 50, left: 72, width: 22, height: 14, label: 'Ações do item' }
 };
 
 const aliasMap: Record<string, string> = {
@@ -49,7 +60,22 @@ const aliasMap: Record<string, string> = {
   'salvar': 'save',
   'pedir-ia': 'ask-ai',
   'carrinho': 'cart',
-  'historico': 'history'
+  'historico': 'history',
+  'swipe-direita': 'swipe-right-cart',
+  'swipe-direita-carrinho': 'swipe-right-cart',
+  'swipe-esquerda': 'swipe-left-delete',
+  'swipe-esquerda-excluir': 'swipe-left-delete',
+  'confirmacao-exclusao': 'delete-confirm-modal',
+  'dialogo-duplicado': 'delete-confirm-modal',
+  'somar-quantidade': 'sum-quantity',
+  'favoritar': 'favorite-star',
+  'estrela-favorito': 'favorite-star',
+  'filtro-favoritos': 'favorites-filter',
+  'modo-mercado': 'market-mode',
+  'checklist': 'checklist-item',
+  'compartilhar-lista': 'share-button',
+  'texto-whatsapp': 'share-text',
+  'acoes-item': 'item-actions'
 };
 
 const normalizeTarget = (target: string) =>

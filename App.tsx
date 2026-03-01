@@ -6,13 +6,17 @@ import { useAppSettings } from './store/appSettingsStore';
 import HelpLayout from './help/HelpLayout';
 import EditItemPanel, { Item as EditPanelItem } from './components/EditItemPanel';
 import CategoryPanel from './components/CategoryPanel';
+import SwipeablePendingItemCard from './components/SwipeablePendingItemCard';
 
 // --- Sub-components ---
 type TabKey = 'lista' | 'carrinho' | 'historico';
 type SuggestionsTab = 'frequentes' | 'ultima_compra' | 'ia';
 type HistoryQuickFilter = 'todos' | '7d' | '30d' | 'maior' | 'menor';
+type ListQuickFilter = 'todos' | 'favoritos';
 const QUICK_ADD_HISTORY_KEY = 'shopping_quick_add_history';
 const ONBOARDING_FLAG_KEY = 'hasSeenOnboarding';
+const FAVORITES_STORAGE_PREFIX = 'shopping_favorites_v1';
+const MARKET_MODE_SESSION_KEY = 'shopping_market_mode_enabled';
 const BASE_ITEM_DICTIONARY = [
   'arroz 5kg',
   'feijao carioca',
@@ -59,6 +63,14 @@ type ConfirmDialogConfig = {
   intent?: 'danger' | 'primary';
 };
 
+type DuplicateDecision = 'sum' | 'separate' | 'cancel';
+
+type DuplicateDialogConfig = {
+  itemName: string;
+  existingQuantity: number;
+  incomingQuantity: number;
+};
+
 type OnboardingStep = {
   title: string;
   description: string;
@@ -69,6 +81,7 @@ const normalizeText = (value: string) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/\s+/g, ' ')
     .trim();
 
 const parseQuickItemInput = (rawValue: string, fallbackQty: number) => {
@@ -112,6 +125,12 @@ const parsePurchaseDate = (rawDate: string) => {
   return parsed;
 };
 
+const formatCurrencyBR = (value: number) =>
+  Number(value || 0).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+
 const QuantityStepper = ({
   value,
   onChange,
@@ -147,6 +166,7 @@ const QuickAddInput = ({
   inferredCategoryName,
   suggestions,
   loading,
+  inputRef,
   onChangeValue,
   onChangeQuantity,
   onPickSuggestion,
@@ -157,6 +177,7 @@ const QuickAddInput = ({
   inferredCategoryName: string;
   suggestions: string[];
   loading: boolean;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
   onChangeValue: (next: string) => void;
   onChangeQuantity: (next: number) => void;
   onPickSuggestion: (suggestion: string) => void;
@@ -216,6 +237,7 @@ const QuickAddInput = ({
 
       <div className="relative">
         <input
+          ref={inputRef}
           type="text"
           value={value}
           placeholder="Ex: arroz 5kg, 2 leite, detergente"
@@ -274,12 +296,60 @@ const QuickAddInput = ({
   );
 };
 
+const EmptyStateCard = ({
+  title,
+  message,
+  ctaLabel,
+  onCta,
+  icon = '✨',
+  mode = 'default'
+}: {
+  title: string;
+  message: string;
+  ctaLabel?: string;
+  onCta?: () => void;
+  icon?: string;
+  mode?: 'default' | 'inverse';
+}) => {
+  const isInverse = mode === 'inverse';
+  const wrapperClass = isInverse
+    ? 'bg-white/10 border border-white/20 text-white'
+    : 'bg-white border border-dashed border-gray-200 text-gray-900 shadow-sm';
+  const titleClass = isInverse ? 'text-white' : 'text-gray-900';
+  const messageClass = isInverse ? 'text-white/80' : 'text-gray-500';
+  const iconClass = isInverse ? 'bg-white/15 text-white' : 'bg-blue-50 text-blue-700';
+  const ctaClass = isInverse
+    ? 'bg-white text-blue-700 hover:bg-blue-50'
+    : 'bg-blue-600 text-white hover:bg-blue-700';
+
+  return (
+    <div className={`mx-auto w-full max-w-xl rounded-[2.25rem] p-6 sm:p-8 text-center ${wrapperClass}`}>
+      <div className={`mx-auto mb-4 h-12 w-12 rounded-2xl flex items-center justify-center text-lg ${iconClass}`}>
+        {icon}
+      </div>
+      <h3 className={`text-xl font-black tracking-tight ${titleClass}`}>{title}</h3>
+      <p className={`mt-2 text-sm font-semibold ${messageClass}`}>{message}</p>
+      {ctaLabel && onCta && (
+        <button
+          type="button"
+          onClick={onCta}
+          className={`mt-5 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 ${ctaClass}`}
+        >
+          {ctaLabel}
+        </button>
+      )}
+    </div>
+  );
+};
+
 const SuggestionsPanel = ({
   activeTab,
   onChangeTab,
   frequentSuggestions,
   latestPurchaseSuggestions,
   aiSuggestions,
+  isFavoriteName,
+  onToggleFavorite,
   loadingAI,
   onAskAI,
   onAddSuggestion,
@@ -290,6 +360,8 @@ const SuggestionsPanel = ({
   frequentSuggestions: string[];
   latestPurchaseSuggestions: string[];
   aiSuggestions: string[];
+  isFavoriteName: (name: string) => boolean;
+  onToggleFavorite: (name: string) => void;
   loadingAI: boolean;
   onAskAI: () => void;
   onAddSuggestion: (name: string) => void;
@@ -304,6 +376,31 @@ const SuggestionsPanel = ({
 
   const tabLabelClass = (tab: SuggestionsTab) =>
     activeTab === tab ? 'text-blue-700 bg-white border-blue-200' : 'text-gray-500 bg-gray-50 border-transparent hover:text-gray-700';
+
+  const emptySuggestionState = (() => {
+    if (activeTab === 'frequentes') {
+      return {
+        title: 'Sem sugestões frequentes',
+        message: 'Adicione alguns itens para montar sua base de sugestões.',
+        ctaLabel: 'Ir para IA',
+        onCta: () => onChangeTab('ia')
+      };
+    }
+    if (activeTab === 'ultima_compra') {
+      return {
+        title: 'Última compra indisponível',
+        message: 'Carregue o histórico para usar itens da compra anterior.',
+        ctaLabel: 'Carregar última compra',
+        onCta: onLoadLastPurchase
+      };
+    }
+    return {
+      title: 'Sem sugestões de IA',
+      message: 'Peça sugestões inteligentes com base na sua lista atual.',
+      ctaLabel: loadingAI ? 'Processando...' : 'Pedir IA',
+      onCta: onAskAI
+    };
+  })();
 
   return (
     <div className="bg-gradient-to-br from-indigo-500 to-blue-600 p-8 rounded-[3rem] text-white shadow-2xl shadow-blue-100">
@@ -334,31 +431,43 @@ const SuggestionsPanel = ({
         </button>
       </div>
 
-      {activeTab === 'ultima_compra' && latestPurchaseSuggestions.length === 0 && (
-        <div className="mb-4">
-          <button
-            type="button"
-            onClick={onLoadLastPurchase}
-            className="bg-white/15 hover:bg-white/25 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest"
-          >
-            Carregar ultima compra
-          </button>
-        </div>
-      )}
-
       {currentList.length === 0 ? (
-        <p className="text-white/80 text-xs font-semibold">Sem sugestoes neste momento.</p>
+        <EmptyStateCard
+          mode="inverse"
+          icon={activeTab === 'ia' ? '🤖' : activeTab === 'ultima_compra' ? '📦' : '💡'}
+          title={emptySuggestionState.title}
+          message={emptySuggestionState.message}
+          ctaLabel={emptySuggestionState.ctaLabel}
+          onCta={emptySuggestionState.onCta}
+        />
       ) : (
         <div className="flex flex-wrap gap-2">
           {currentList.map((name, index) => (
-            <button
+            <div
               key={`${name}-${index}`}
-              type="button"
-              onClick={() => onAddSuggestion(name)}
-              className="bg-white/10 hover:bg-white text-white hover:text-blue-700 px-5 py-2.5 rounded-2xl text-xs font-black transition-all border border-white/10 shadow-sm"
+              className="inline-flex items-center gap-1 bg-white/10 border border-white/15 rounded-2xl p-1 shadow-sm"
             >
-              + {name}
-            </button>
+              <button
+                type="button"
+                onClick={() => onAddSuggestion(name)}
+                className="hover:bg-white text-white hover:text-blue-700 px-4 py-2 rounded-xl text-xs font-black transition-all"
+              >
+                + {name}
+              </button>
+              <button
+                type="button"
+                onClick={() => onToggleFavorite(name)}
+                className={`w-8 h-8 rounded-xl text-sm transition-all active:scale-90 ${
+                  isFavoriteName(name)
+                    ? 'bg-amber-300 text-amber-900'
+                    : 'bg-white/15 text-white hover:bg-white/25'
+                }`}
+                aria-label={isFavoriteName(name) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+                title={isFavoriteName(name) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+              >
+                ⭐
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -439,6 +548,56 @@ const ConfirmationModal = ({
           </button>
           <button onClick={onConfirm} className={`px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider transition-all active:scale-95 ${confirmBtnClass}`}>
             {config.confirmLabel || 'Confirmar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DuplicateItemModal = ({
+  isOpen,
+  config,
+  onSelect
+}: {
+  isOpen: boolean;
+  config: DuplicateDialogConfig | null;
+  onSelect: (decision: DuplicateDecision) => void;
+}) => {
+  if (!isOpen || !config) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[10003] flex items-center justify-center p-4" onClick={() => onSelect('cancel')}>
+      <div className="bg-white w-full max-w-xl rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-2xl font-black text-gray-900 tracking-tight mb-3">Item duplicado</h3>
+        <p className="text-sm font-medium text-gray-600 leading-relaxed">
+          Este item já está na lista. Deseja somar a quantidade?
+        </p>
+        <div className="mt-5 p-4 rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 text-sm font-semibold space-y-1">
+          <p>Item: {config.itemName}</p>
+          <p>Atual: {config.existingQuantity} • Novo: {config.incomingQuantity}</p>
+        </div>
+        <div className="mt-7 flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => onSelect('sum')}
+            className="w-full px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider transition-all active:scale-95 bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            Somar quantidade
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect('separate')}
+            className="w-full px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider transition-all active:scale-95 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100"
+          >
+            Manter separado
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect('cancel')}
+            className="w-full px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider transition-all active:scale-95 bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+          >
+            Cancelar
           </button>
         </div>
       </div>
@@ -930,13 +1089,18 @@ export default function App() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
   const [confirmConfig, setConfirmConfig] = useState<ConfirmDialogConfig | null>(null);
+  const [duplicateConfig, setDuplicateConfig] = useState<DuplicateDialogConfig | null>(null);
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [suggestionsTab, setSuggestionsTab] = useState<SuggestionsTab>('frequentes');
   const [catFilter, setCatFilter] = useState('todos');
+  const [listQuickFilter, setListQuickFilter] = useState<ListQuickFilter>('todos');
   const [historySearch, setHistorySearch] = useState('');
   const [historyFilter, setHistoryFilter] = useState<HistoryQuickFilter>('todos');
   const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const [isMarketMode, setIsMarketMode] = useState(
+    typeof window !== 'undefined' && sessionStorage.getItem(MARKET_MODE_SESSION_KEY) === 'true'
+  );
   const [hasSeenOnboarding, setHasSeenOnboarding] = useState(
     typeof window !== 'undefined' && localStorage.getItem(ONBOARDING_FLAG_KEY) === 'true'
   );
@@ -966,8 +1130,11 @@ export default function App() {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryIcon, setNewCategoryIcon] = useState('📦');
   const [newCategoryColor, setNewCategoryColor] = useState('#9E9E9E');
+  const [favoriteNames, setFavoriteNames] = useState<string[]>([]);
   const [editingItemId, setEditingItemId] = useState<string | number | null>(null);
+  const quickAddInputRef = useRef<HTMLInputElement | null>(null);
   const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
+  const duplicateResolverRef = useRef<((value: DuplicateDecision) => void) | null>(null);
   const onboardingSteps: OnboardingStep[] = [
     {
       title: 'Crie seus itens',
@@ -1053,6 +1220,11 @@ export default function App() {
     setPendingHelpTarget(null);
   }, [user, pendingHelpTarget]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    sessionStorage.setItem(MARKET_MODE_SESSION_KEY, isMarketMode ? 'true' : 'false');
+  }, [isMarketMode]);
+
   const fetchInitialData = async () => {
     setLoading(true);
     try {
@@ -1093,8 +1265,7 @@ export default function App() {
     setLoading(true);
     try {
       const loadedItems = await api.getItems();
-      setItems(loadedItems);
-      setItemsLoaded(true);
+      commitItems(loadedItems);
       if (editingItemId !== null && !loadedItems.some(i => i.id === editingItemId)) {
         handleCancelEditItem();
       }
@@ -1128,6 +1299,92 @@ export default function App() {
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
   };
+
+  const favoriteNameSet = useMemo(() => new Set(favoriteNames), [favoriteNames]);
+
+  const getFavoritesStorageKey = (email: string) =>
+    `${FAVORITES_STORAGE_PREFIX}:${normalizeText(email)}`;
+
+  const isFavoriteName = useCallback(
+    (name: string) => favoriteNameSet.has(normalizeText(name)),
+    [favoriteNameSet]
+  );
+
+  const applyFavoriteFlagsToItems = useCallback(
+    (incomingItems: ShoppingItem[]) =>
+      incomingItems.map((item) => ({
+        ...item,
+        isFavorito: isFavoriteName(item.nome)
+      })),
+    [isFavoriteName]
+  );
+
+  const commitItems = useCallback(
+    (nextItems: ShoppingItem[]) => {
+      setItems(applyFavoriteFlagsToItems(nextItems));
+      setItemsLoaded(true);
+    },
+    [applyFavoriteFlagsToItems]
+  );
+
+  const toggleFavoriteByName = (rawName: string) => {
+    const normalized = normalizeText(rawName);
+    if (!normalized) return;
+    const isCurrentlyFavorite = favoriteNameSet.has(normalized);
+    setFavoriteNames((prev) =>
+      isCurrentlyFavorite
+        ? prev.filter((name) => name !== normalized)
+        : [normalized, ...prev.filter((name) => name !== normalized)]
+    );
+    setItems((prev) =>
+      prev.map((item) =>
+        normalizeText(item.nome) === normalized
+          ? { ...item, isFavorito: !isCurrentlyFavorite }
+          : item
+      )
+    );
+    showToast(
+      isCurrentlyFavorite
+        ? `Favorito removido: ${rawName}`
+        : `Favorito adicionado: ${rawName}`,
+      isCurrentlyFavorite ? 'info' : 'success'
+    );
+  };
+
+  useEffect(() => {
+    if (!user?.email) {
+      setFavoriteNames([]);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(getFavoritesStorageKey(user.email));
+      const parsed = raw ? JSON.parse(raw) : [];
+      const normalized = Array.isArray(parsed)
+        ? Array.from(
+            new Set(
+              parsed
+                .map((value) => normalizeText(String(value || '')))
+                .filter(Boolean)
+            )
+          )
+        : [];
+      setFavoriteNames(normalized);
+    } catch {
+      setFavoriteNames([]);
+    }
+  }, [user?.email]);
+
+  useEffect(() => {
+    if (!user?.email) return;
+    localStorage.setItem(
+      getFavoritesStorageKey(user.email),
+      JSON.stringify(favoriteNames)
+    );
+  }, [user?.email, favoriteNames]);
+
+  useEffect(() => {
+    setItems((prev) => applyFavoriteFlagsToItems(prev));
+  }, [applyFavoriteFlagsToItems]);
 
   const parsePriceValue = (value: string) => {
     const normalized = (value || '').replace(',', '.').trim();
@@ -1201,16 +1458,17 @@ export default function App() {
       if (!name) return;
       const normalized = normalizeText(name);
       if (!normalized) return;
+      const boostedScore = score + (favoriteNameSet.has(normalized) ? 8 : 0);
       const existing = frequency.get(normalized);
       if (existing) {
-        existing.score += score;
+        existing.score += boostedScore;
       } else {
-        frequency.set(normalized, { name, score });
+        frequency.set(normalized, { name, score: boostedScore });
       }
     };
 
     quickAddHistory.forEach((name) => upsert(name, 4));
-    items.forEach((item) => upsert(item.nome, 3));
+    items.forEach((item) => upsert(item.nome, item.isFavorito ? 7 : 3));
     historyData?.compras?.forEach((purchase) => {
       purchase.itens.forEach((item) => upsert(String(item?.nome || ''), 2));
     });
@@ -1219,7 +1477,7 @@ export default function App() {
     return Array.from(frequency.values())
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'pt-BR'))
       .map((entry) => entry.name);
-  }, [items, historyData, quickAddHistory]);
+  }, [items, historyData, quickAddHistory, favoriteNameSet]);
 
   const quickAddSuggestions = useMemo(() => {
     if (!newItemName.trim()) return quickAddCatalog.slice(0, 8);
@@ -1270,12 +1528,66 @@ export default function App() {
     }
   };
 
+  const requestDuplicateDecision = (config: DuplicateDialogConfig) => {
+    setDuplicateConfig(config);
+    return new Promise<DuplicateDecision>((resolve) => {
+      duplicateResolverRef.current = resolve;
+    });
+  };
+
+  const handleDuplicateResult = (decision: DuplicateDecision) => {
+    setDuplicateConfig(null);
+    if (duplicateResolverRef.current) {
+      const resolve = duplicateResolverRef.current;
+      duplicateResolverRef.current = null;
+      resolve(decision);
+    }
+  };
+
+  const findDuplicatePendingItem = (name: string) => {
+    const normalizedName = normalizeText(name);
+    if (!normalizedName) return null;
+    return items.find(
+      (item) => item.status === 'pendente' && normalizeText(item.nome) === normalizedName
+    ) || null;
+  };
+
+  const mergeQuantityIntoExistingItem = async (
+    existingItem: ShoppingItem,
+    quantityToAdd: number
+  ) => {
+    const incomingQty = Math.max(1, Number(quantityToAdd) || 1);
+    setLoading(true);
+    try {
+      await api.updateItem(existingItem.id, {
+        nome: existingItem.nome,
+        quantidade: Math.max(1, Number(existingItem.quantidade) || 1) + incomingQty,
+        categoria: existingItem.categoria,
+        precoEstimado: Number(existingItem.precoEstimado) || 0
+      });
+      const refreshed = await api.getItems();
+      commitItems(refreshed);
+      showToast(`Quantidade somada em "${existingItem.nome}".`, 'success');
+      return true;
+    } catch (e: any) {
+      showToast(e?.message || 'Erro ao somar quantidade no item existente', 'error');
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     return () => {
       if (confirmResolverRef.current) {
         const resolve = confirmResolverRef.current;
         confirmResolverRef.current = null;
         resolve(false);
+      }
+      if (duplicateResolverRef.current) {
+        const resolve = duplicateResolverRef.current;
+        duplicateResolverRef.current = null;
+        resolve('cancel');
       }
     };
   }, []);
@@ -1286,6 +1598,7 @@ export default function App() {
     setItemsLoaded(false);
     setHistoryData(null);
     setHistoryLoaded(false);
+    setListQuickFilter('todos');
     setHistorySearch('');
     setHistoryFilter('todos');
     setUser(null);
@@ -1342,18 +1655,47 @@ export default function App() {
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newItemName || !newItemCat) {
+    const normalizedName = newItemName.replace(/\s+/g, ' ').trim();
+    const quantity = Math.max(1, Number(newItemQtd) || 1);
+    if (!normalizedName || !newItemCat) {
       showToast('Informe nome e categoria para salvar na planilha.', 'error');
       return;
     }
+
+    const duplicate = findDuplicatePendingItem(normalizedName);
+    if (duplicate) {
+      const decision = await requestDuplicateDecision({
+        itemName: duplicate.nome,
+        existingQuantity: Math.max(1, Number(duplicate.quantidade) || 1),
+        incomingQuantity: quantity
+      });
+
+      if (decision === 'cancel') return;
+      if (decision === 'sum') {
+        const merged = await mergeQuantityIntoExistingItem(duplicate, quantity);
+        if (merged) {
+          setNewItemName('');
+          setNewItemQtd(1);
+          setNewItemPrice('');
+          setNewItemCat(duplicate.categoria || newItemCat);
+          addQuickHistoryItem(normalizedName);
+        }
+        return;
+      }
+    }
+
     setLoading(true);
     try {
-      await api.addItem({ nome: newItemName, quantidade: newItemQtd, categoria: newItemCat, precoEstimado: parsePriceValue(newItemPrice) });
+      await api.addItem({
+        nome: normalizedName,
+        quantidade: quantity,
+        categoria: newItemCat,
+        precoEstimado: parsePriceValue(newItemPrice)
+      });
       const updated = await api.getItems();
-      setItems(updated);
-      setItemsLoaded(true);
+      commitItems(updated);
       setNewItemName(''); setNewItemQtd(1); setNewItemPrice('');
-      addQuickHistoryItem(newItemName);
+      addQuickHistoryItem(normalizedName);
       showToast('Item adicionado!', 'success');
     } catch (e: any) {
       showToast(e?.message || 'Erro ao salvar item na planilha', 'error');
@@ -1378,8 +1720,34 @@ export default function App() {
       showToast('Digite o nome do item para adicionar.', 'error');
       return false;
     }
+    const normalizedName = parsed.nome.replace(/\s+/g, ' ').trim();
+    const safeQty = Math.max(1, Number(finalQty) || 1);
 
-    const resolvedCategory = inferCategory(parsed.nome) || categories[0];
+    const duplicate = findDuplicatePendingItem(normalizedName);
+    if (duplicate) {
+      const decision = await requestDuplicateDecision({
+        itemName: duplicate.nome,
+        existingQuantity: Math.max(1, Number(duplicate.quantidade) || 1),
+        incomingQuantity: safeQty
+      });
+
+      if (decision === 'cancel') return false;
+      if (decision === 'sum') {
+        const merged = await mergeQuantityIntoExistingItem(duplicate, safeQty);
+        if (merged) {
+          setNewItemCat(duplicate.categoria || newItemCat);
+          addQuickHistoryItem(normalizedName);
+          if (options?.resetInput) {
+            setNewItemName('');
+            setNewItemQtd(1);
+            setNewItemPrice('');
+          }
+        }
+        return merged;
+      }
+    }
+
+    const resolvedCategory = inferCategory(normalizedName) || categories[0];
     if (!resolvedCategory?.nome) {
       showToast('Não foi possível inferir a categoria. Selecione uma manualmente.', 'error');
       return false;
@@ -1388,16 +1756,15 @@ export default function App() {
     setLoading(true);
     try {
       await api.addItem({
-        nome: parsed.nome,
-        quantidade: Math.max(1, Number(finalQty) || 1),
+        nome: normalizedName,
+        quantidade: safeQty,
         categoria: resolvedCategory.nome,
         precoEstimado: parsePriceValue(newItemPrice)
       });
       const updated = await api.getItems();
-      setItems(updated);
-      setItemsLoaded(true);
+      commitItems(updated);
       setNewItemCat(resolvedCategory.nome);
-      addQuickHistoryItem(parsed.nome);
+      addQuickHistoryItem(normalizedName);
       if (options?.resetInput) {
         setNewItemName('');
         setNewItemQtd(1);
@@ -1433,7 +1800,7 @@ export default function App() {
         : item
     );
 
-    setItems(optimisticItems);
+    setItems(applyFavoriteFlagsToItems(optimisticItems));
     setItemsLoaded(true);
     if (editingItemId !== null && String(editingItemId) === targetId) handleCancelEditItem();
     setTogglingItemIds((prev) => (prev.includes(targetId) ? prev : [...prev, targetId]));
@@ -1452,15 +1819,14 @@ export default function App() {
       if (beforeStatus && afterStatus === beforeStatus) {
         throw new Error('Não foi possível mover o item entre lista e carrinho. Tente novamente.');
       }
-      setItems(refreshed);
-      setItemsLoaded(true);
+      commitItems(refreshed);
       if (afterStatus === 'comprado') {
         showToast('Item movido para o carrinho.', 'success');
       } else if (afterStatus === 'pendente') {
         showToast('Item voltou para a lista.', 'info');
       }
     } catch (e: any) {
-      setItems(previousItems);
+      setItems(applyFavoriteFlagsToItems(previousItems));
       showToast(e?.message || 'Erro ao atualizar status no servidor', 'error');
     } finally {
       setTogglingItemIds((prev) => prev.filter((itemId) => itemId !== targetId));
@@ -1483,8 +1849,7 @@ export default function App() {
     try {
       await api.removeItem(id);
       const refreshed = await api.getItems();
-      setItems(refreshed);
-      setItemsLoaded(true);
+      commitItems(refreshed);
       if (editingItemId !== null && String(editingItemId) === String(id)) handleCancelEditItem();
       showToast('Item removido com sucesso.', 'success');
     } catch (e: any) {
@@ -1517,8 +1882,7 @@ export default function App() {
         precoEstimado: Number(item.precoEstimado) || 0
       });
       const refreshed = await api.getItems();
-      setItems(refreshed);
-      setItemsLoaded(true);
+      commitItems(refreshed);
       handleCancelEditItem();
       showToast('Item atualizado!', 'success');
     } catch (e: any) {
@@ -1608,8 +1972,7 @@ export default function App() {
         api.getItems(),
         api.getHistory()
       ]);
-      setItems(updatedItems);
-      setItemsLoaded(true);
+      commitItems(updatedItems);
       setHistoryData(updatedHistory);
       setHistoryLoaded(true);
       setActiveTab('lista');
@@ -1638,8 +2001,7 @@ export default function App() {
     try {
       await api.finalizePurchase();
       const updated = await api.getItems();
-      setItems(updated);
-      setItemsLoaded(true);
+      commitItems(updated);
       setHistoryLoaded(false);
       setHistoryData(null);
       showToast('Finalizado! Clique em "Carregar Histórico" para atualizar os dados.', 'success');
@@ -1715,6 +2077,91 @@ export default function App() {
     }
   };
 
+  const focusQuickAddInput = () => {
+    setActiveTab('lista');
+    window.requestAnimationFrame(() => {
+      quickAddInputRef.current?.focus();
+      quickAddInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
+
+  const handleToggleMarketMode = () => {
+    setIsMarketMode((prev) => {
+      const next = !prev;
+      showToast(next ? 'Modo mercado ativado.' : 'Modo mercado desativado.', 'info');
+      return next;
+    });
+  };
+
+  const buildShareListText = () => {
+    const pending = items.filter((item) => item.status === 'pendente');
+    const sourceItems = pending.length ? pending : items;
+    if (!sourceItems.length) return '';
+
+    const total = sourceItems.reduce(
+      (acc, item) => acc + (Number(item.precoEstimado) || 0) * (Number(item.quantidade) || 1),
+      0
+    );
+    const lines = [
+      'Lista de compras:',
+      '',
+      ...sourceItems.map((item) => `- ${item.nome} (${Math.max(1, Number(item.quantidade) || 1)})`),
+      '',
+      `Total estimado: R$ ${formatCurrencyBR(total)}`
+    ];
+    return lines.join('\n');
+  };
+
+  const copyTextWithFallback = async (text: string) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  };
+
+  const handleShareList = async () => {
+    const text = buildShareListText();
+    if (!text) {
+      showToast('Sua lista está vazia para compartilhar.', 'info');
+      return;
+    }
+
+    const sharePayload = {
+      title: 'Lista de compras',
+      text
+    };
+
+    if (navigator.share) {
+      try {
+        await navigator.share(sharePayload);
+        showToast('Lista compartilhada com sucesso.', 'success');
+        return;
+      } catch (e: any) {
+        if (e?.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      const copied = await copyTextWithFallback(text);
+      if (!copied) throw new Error('Falha ao copiar texto');
+      showToast('Lista copiada para compartilhar no WhatsApp.', 'success');
+    } catch {
+      showToast('Não foi possível compartilhar agora. Tente novamente.', 'error');
+    }
+  };
+
   if (currentPath === '/help') {
     return <HelpLayout onBack={navigateToHome} onOpenDeepLink={handleHelpOpenDeepLink} />;
   }
@@ -1748,7 +2195,12 @@ export default function App() {
         precoEstimado: Number(editingItem.precoEstimado) || 0
       }
     : null;
-  const pendingItems = items.filter(i => i.status === 'pendente' && (catFilter === 'todos' || i.categoria === catFilter));
+  const pendingItems = items.filter(
+    (i) =>
+      i.status === 'pendente' &&
+      (catFilter === 'todos' || i.categoria === catFilter) &&
+      (listQuickFilter === 'todos' || i.isFavorito)
+  );
   const boughtItems = items.filter(i => i.status === 'comprado');
   const cartTotal = boughtItems.reduce((acc, curr) => acc + (curr.precoEstimado * curr.quantidade), 0);
   const selectedCount = boughtItems.length;
@@ -1803,6 +2255,11 @@ export default function App() {
         onCancel={() => handleConfirmationResult(false)}
         onConfirm={() => handleConfirmationResult(true)}
       />
+      <DuplicateItemModal
+        isOpen={!!duplicateConfig}
+        config={duplicateConfig}
+        onSelect={handleDuplicateResult}
+      />
       <OnboardingModal
         isOpen={isOnboardingOpen && !hasSeenOnboarding}
         steps={onboardingSteps}
@@ -1840,6 +2297,7 @@ export default function App() {
                 inferredCategoryName={inferredCategoryForInput?.nome || ''}
                 suggestions={quickAddSuggestions}
                 loading={loading}
+                inputRef={quickAddInputRef}
                 onChangeValue={handleItemNameChange}
                 onChangeQuantity={setNewItemQtd}
                 onPickSuggestion={(suggestion) => handleItemNameChange(suggestion)}
@@ -1882,6 +2340,8 @@ export default function App() {
               frequentSuggestions={frequentSuggestions}
               latestPurchaseSuggestions={latestPurchaseSuggestions}
               aiSuggestions={aiSuggestions}
+              isFavoriteName={isFavoriteName}
+              onToggleFavorite={toggleFavoriteByName}
               loadingAI={loadingSuggestions}
               onAskAI={handleGetSuggestions}
               onAddSuggestion={handleAddSuggestion}
@@ -1889,77 +2349,54 @@ export default function App() {
             />
 
             <div className="space-y-4">
-              <div className="flex items-center justify-between px-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4">
                  <h2 className="font-black text-gray-900 uppercase text-xs tracking-widest">Sua Lista ({pendingItems.length})</h2>
-                 <select className="text-[10px] font-black bg-white px-3 py-1.5 rounded-full border border-gray-100 outline-none text-gray-900" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
-                    <option value="todos">Todas Categorias</option>
-                    {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-                 </select>
+                 <div className="flex flex-wrap items-center gap-2">
+                   <button
+                     type="button"
+                     onClick={handleShareList}
+                     className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all active:scale-95"
+                   >
+                     📤 Compartilhar lista
+                   </button>
+                   <button
+                     type="button"
+                     onClick={() => setListQuickFilter((prev) => (prev === 'favoritos' ? 'todos' : 'favoritos'))}
+                     className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all ${
+                       listQuickFilter === 'favoritos'
+                         ? 'bg-amber-100 text-amber-800 border-amber-300'
+                         : 'bg-white text-gray-500 border-gray-200 hover:border-amber-200 hover:text-amber-700'
+                     }`}
+                   >
+                     ⭐ Favoritos
+                   </button>
+                   <select className="text-[10px] font-black bg-white px-3 py-1.5 rounded-full border border-gray-100 outline-none text-gray-900" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+                      <option value="todos">Todas Categorias</option>
+                      {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+                   </select>
+                 </div>
               </div>
               {pendingItems.length === 0 && (
-                <div className="text-center py-20 bg-white rounded-[3rem] border border-dashed border-gray-200">
-                  <p className="text-gray-400 font-black uppercase text-[10px] tracking-[0.3em]">Nada pendente por aqui!</p>
-                </div>
+                <EmptyStateCard
+                  icon="📝"
+                  title="Sua lista está vazia"
+                  message="Adicione itens para começar sua compra."
+                  ctaLabel="Adicionar primeiro item"
+                  onCta={focusQuickAddInput}
+                />
               )}
               {pendingItems.map(it => {
                 const isToggling = togglingItemIds.includes(String(it.id));
                 return (
-                  <div
+                  <SwipeablePendingItemCard
                     key={it.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleStartEditItem(it)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleStartEditItem(it);
-                      }
-                    }}
-                    className="bg-white p-6 md:p-4 rounded-[2.5rem] shadow-xl shadow-gray-100 border border-white flex items-center justify-between gap-3 md:gap-2 group hover:border-blue-200 transition-all hover:scale-[1.01] cursor-pointer min-h-[44px]"
-                  >
-                    <div className="flex items-center gap-5 md:gap-3">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleStatus(it.id);
-                        }}
-                        disabled={isToggling}
-                        className="w-14 h-14 md:w-12 md:h-12 rounded-[1.2rem] border-4 border-blue-50 hover:bg-blue-50 transition-colors flex items-center justify-center bg-gray-50 disabled:opacity-70"
-                      >
-                        {isToggling ? (
-                          <span className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <span className="w-3 h-3 rounded-full bg-blue-200" />
-                        )}
-                      </button>
-                      <div>
-                        <h3 className="font-black text-gray-900 text-lg leading-tight">{it.nome}</h3>
-                        <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mt-1">
-                          {it.quantidade}x • {it.categoria} • R$ {Number(it.precoEstimado || 0).toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleStartEditItem(it);
-                        }}
-                        className="p-3 min-h-[44px] min-w-[44px] text-gray-300 hover:text-blue-600 active:scale-90"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRemoveItem(it.id);
-                        }}
-                        className="p-3 min-h-[44px] min-w-[44px] text-gray-300 hover:text-red-500 active:scale-90"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                      </button>
-                    </div>
-                  </div>
+                    item={it}
+                    isToggling={isToggling}
+                    onMoveToCart={handleToggleStatus}
+                    onOpenEdit={handleStartEditItem}
+                    onRemove={handleRemoveItem}
+                    onToggleFavorite={toggleFavoriteByName}
+                  />
                 );
               })}
             </div>
@@ -1967,8 +2404,25 @@ export default function App() {
         )}
 
         {activeTab === 'carrinho' && (
-          <div className="space-y-6 animate-fade-in">
-            <div className="bg-green-600 p-6 sm:p-12 rounded-[2.5rem] sm:rounded-[4rem] text-white shadow-2xl shadow-green-100 border-4 border-white">
+          <div className={`animate-fade-in ${isMarketMode ? 'space-y-4 pb-28' : 'space-y-6'}`}>
+            <div className="flex items-center justify-between gap-3 px-1">
+              <h2 className="text-[10px] font-black uppercase tracking-widest text-gray-500">Operação de compra</h2>
+              <button
+                type="button"
+                onClick={handleToggleMarketMode}
+                className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all active:scale-95 ${
+                  isMarketMode
+                    ? 'bg-green-600 text-white border-green-600 shadow-lg shadow-green-100'
+                    : 'bg-white text-green-700 border-green-200 hover:bg-green-50'
+                }`}
+              >
+                🛒 {isMarketMode ? 'Modo mercado ativo' : 'Modo mercado'}
+              </button>
+            </div>
+
+            <div className={`bg-green-600 p-6 sm:p-12 rounded-[2.5rem] sm:rounded-[4rem] text-white shadow-2xl shadow-green-100 border-4 border-white ${
+              isMarketMode ? 'sticky top-[72px] sm:top-[88px] z-20' : ''
+            }`}>
               <p className="text-green-100 text-[10px] font-black uppercase tracking-[0.3em] opacity-80">Subtotal Selecionado</p>
               <h2 className="text-4xl sm:text-6xl font-black mt-3 tracking-tighter break-words">R$ {cartTotal.toFixed(2)}</h2>
               <div className="mt-6">
@@ -1984,20 +2438,43 @@ export default function App() {
               </div>
             </div>
             
-            <div className="space-y-4">
+            <div className={isMarketMode ? 'space-y-3 overscroll-contain' : 'space-y-4'}>
               {boughtItems.length === 0 && (
-                <div className="text-center py-20">
-                  <p className="text-gray-300 font-black uppercase text-[10px] tracking-widest">O carrinho está vazio</p>
-                </div>
+                <EmptyStateCard
+                  icon="🛒"
+                  title="Carrinho vazio"
+                  message="Marque itens da lista para acompanhar o que já pegou no mercado."
+                  ctaLabel="Voltar para lista"
+                  onCta={() => setActiveTab('lista')}
+                />
               )}
               {boughtItems.map(it => {
                 const isToggling = togglingItemIds.includes(String(it.id));
                 return (
-                  <div key={it.id} className="bg-white p-6 rounded-[2.5rem] border border-gray-100 flex items-center gap-5 shadow-sm group hover:scale-[1.01] transition-all">
+                  <div
+                    key={it.id}
+                    role={isMarketMode ? 'button' : undefined}
+                    tabIndex={isMarketMode ? 0 : undefined}
+                    onClick={isMarketMode ? () => handleToggleStatus(it.id) : undefined}
+                    onKeyDown={isMarketMode ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleToggleStatus(it.id);
+                      }
+                    } : undefined}
+                    className={`bg-white border border-gray-100 flex items-center shadow-sm transition-all ${
+                      isMarketMode
+                        ? 'p-5 rounded-[2rem] gap-4 min-h-[88px] cursor-pointer active:scale-[0.995]'
+                        : 'p-6 rounded-[2.5rem] gap-5 group hover:scale-[1.01]'
+                    }`}
+                  >
                     <button
-                      onClick={() => handleToggleStatus(it.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleToggleStatus(it.id);
+                      }}
                       disabled={isToggling}
-                      className="w-14 h-14 rounded-[1.3rem] bg-green-500 flex items-center justify-center text-white shadow-lg active:scale-90 transition-all disabled:opacity-70"
+                      className={`${isMarketMode ? 'w-16 h-16 rounded-[1.1rem]' : 'w-14 h-14 rounded-[1.3rem]'} bg-green-500 flex items-center justify-center text-white shadow-lg active:scale-90 transition-all disabled:opacity-70`}
                       aria-label="Desmarcar item do carrinho"
                     >
                       {isToggling ? (
@@ -2007,20 +2484,24 @@ export default function App() {
                       )}
                     </button>
                     <div className="flex-1">
-                      <div className="flex items-center justify-between gap-3">
-                        <h3 className="font-bold text-gray-400 line-through text-lg">{it.nome}</h3>
-                        <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${isToggling ? 'text-amber-700 bg-amber-100' : 'text-green-700 bg-green-100'}`}>
-                          {isToggling ? 'Atualizando' : 'Selecionado'}
-                        </span>
+                      <div className={`flex items-center justify-between gap-3 ${isMarketMode ? 'mb-1' : ''}`}>
+                        <h3 className={`font-bold text-gray-400 line-through ${isMarketMode ? 'text-2xl tracking-tight' : 'text-lg'}`}>{it.nome}</h3>
+                        {!isMarketMode && (
+                          <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${isToggling ? 'text-amber-700 bg-amber-100' : 'text-green-700 bg-green-100'}`}>
+                            {isToggling ? 'Atualizando' : 'Selecionado'}
+                          </span>
+                        )}
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
-                        <p className="text-xs font-black text-green-700 uppercase tracking-widest">
-                          Quantidade: {it.quantidade}
+                      <div className={`grid gap-2 mt-2 ${isMarketMode ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
+                        <p className={`font-black ${isMarketMode ? 'text-sm text-green-800' : 'text-xs text-green-700 uppercase tracking-widest'}`}>
+                          Qtd: {it.quantidade}
                         </p>
-                        <p className="text-xs font-black text-gray-600 uppercase tracking-widest">
-                          Preço: R$ {Number(it.precoEstimado || 0).toFixed(2)}
-                        </p>
-                        <p className="text-lg font-black text-gray-900 sm:text-right">
+                        {!isMarketMode && (
+                          <p className="text-xs font-black text-gray-600 uppercase tracking-widest">
+                            Preço: R$ {Number(it.precoEstimado || 0).toFixed(2)}
+                          </p>
+                        )}
+                        <p className={`font-black text-gray-900 ${isMarketMode ? 'text-xl text-right' : 'text-lg sm:text-right'}`}>
                           R$ {(it.precoEstimado * it.quantidade).toFixed(2)}
                         </p>
                       </div>
@@ -2034,7 +2515,9 @@ export default function App() {
               <button
                 onClick={handleFinalize}
                 disabled={finalizingPurchase}
-                className="w-full md:w-auto md:px-12 md:self-end min-h-[48px] bg-green-600 text-white py-6 md:py-5 rounded-[3rem] font-black text-xl md:text-2xl hover:bg-green-700 shadow-2xl shadow-green-100 transition-all border-b-8 border-green-800 tracking-tighter uppercase active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                className={`w-full min-h-[48px] bg-green-600 text-white py-6 md:py-5 rounded-[3rem] font-black text-xl md:text-2xl hover:bg-green-700 shadow-2xl shadow-green-100 transition-all border-b-8 border-green-800 tracking-tighter uppercase active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3 ${
+                  isMarketMode ? 'sticky bottom-20 z-30' : 'md:w-auto md:px-12 md:self-end'
+                }`}
               >
                 {finalizingPurchase && <span className="w-5 h-5 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />}
                 {finalizingPurchase ? 'SALVANDO...' : 'FINALIZAR E SALVAR'}
@@ -2046,12 +2529,13 @@ export default function App() {
         {activeTab === 'historico' && (
           <div className="space-y-6 animate-fade-in">
             {!historyLoaded && (
-              <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-sm text-center">
-                <p className="text-gray-500 text-xs font-black uppercase tracking-widest mb-5">Histórico sob demanda</p>
-                <button onClick={fetchHistory} className="w-full sm:w-auto min-h-[48px] bg-purple-600 text-white py-4 px-8 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-purple-700 transition-all active:scale-95">
-                  Carregar Histórico
-                </button>
-              </div>
+              <EmptyStateCard
+                icon="📚"
+                title="Histórico ainda não carregado"
+                message="Carregue o histórico para ver compras anteriores e reaproveitar listas."
+                ctaLabel="Carregar histórico"
+                onCta={fetchHistory}
+              />
             )}
 
             {historyLoaded && (
@@ -2102,9 +2586,16 @@ export default function App() {
              </div>
              
              {historyPurchases.length === 0 && (
-                <div className="text-center py-20">
-                  <p className="text-gray-300 font-black uppercase text-[10px] tracking-widest">Nenhuma compra encontrada com os filtros atuais</p>
-                </div>
+                <EmptyStateCard
+                  icon="📭"
+                  title="Nenhuma compra encontrada"
+                  message="Ajuste os filtros ou carregue novas compras para visualizar o histórico."
+                  ctaLabel="Limpar filtros"
+                  onCta={() => {
+                    setHistorySearch('');
+                    setHistoryFilter('todos');
+                  }}
+                />
              )}
              
              {historyPurchases.map(p => (

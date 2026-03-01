@@ -157,7 +157,7 @@ class ShoppingAPI {
     return await callBackend('listarItens') || [];
   }
 
-  async addItem(item: Omit<ShoppingItem, 'id' | 'status' | 'dataAdicao'>): Promise<any> {
+  async addItem(item: Omit<ShoppingItem, 'id' | 'status' | 'dataAdicao' | 'isFavorito'>): Promise<any> {
     const result = await callBackend('adicionarItem', item);
     assertMutationSuccess('adicionarItem', result);
     return result;

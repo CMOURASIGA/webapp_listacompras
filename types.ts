@@ -16,6 +16,7 @@ export interface ShoppingItem {
   precoEstimado: number;
   status: ItemStatus;
   dataAdicao: string;
+  isFavorito: boolean;
 }
 
 export interface PurchaseHistoryItem {
