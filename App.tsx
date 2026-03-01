@@ -393,7 +393,7 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
   const bg = type === 'success' ? 'bg-green-600' : type === 'error' ? 'bg-red-600' : 'bg-blue-600';
 
   return (
-    <div className={`fixed bottom-20 sm:bottom-10 left-1/2 -translate-x-1/2 ${bg} text-white px-6 py-3 rounded-2xl shadow-2xl z-[10000] flex items-center gap-2 animate-bounce text-sm font-medium text-center min-w-[280px]`}>
+    <div className={`fixed bottom-20 sm:bottom-10 left-1/2 -translate-x-1/2 ${bg} text-white px-4 py-3 rounded-2xl shadow-2xl z-[10000] flex items-center gap-2 animate-bounce text-sm font-medium text-center w-[calc(100%-1rem)] max-w-md`}>
       <span>{message}</span>
     </div>
   );
@@ -801,7 +801,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="bg-white p-12 rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center border border-white">
+      <div className="bg-white p-8 sm:p-12 rounded-[3rem] sm:rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center border border-white">
         <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center text-white font-black text-5xl shadow-xl mx-auto mb-8 border-4 border-white">L</div>
         <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tighter">Shopping Pro</h1>
         <p className="text-gray-400 mb-12 font-bold uppercase text-[10px] tracking-[0.3em]">Gestão Inteligente</p>
@@ -1672,7 +1672,7 @@ export default function App() {
   })();
 
   return (
-    <div className="max-w-4xl mx-auto pb-24 min-h-screen flex flex-col bg-gray-50">
+    <div className="max-w-4xl mx-auto pb-24 min-h-screen flex flex-col bg-gray-50 overflow-x-hidden">
       {loading && <LoadingOverlay />}
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <ConfirmationModal
@@ -1708,7 +1708,7 @@ export default function App() {
         isOnline={isOnline}
       />
 
-      <main className="p-4 flex-1">
+      <main className="p-3 sm:p-4 flex-1">
         {activeTab === 'lista' && (
           <div className="space-y-6 animate-fade-in">
             <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-white">
@@ -1861,9 +1861,9 @@ export default function App() {
 
         {activeTab === 'carrinho' && (
           <div className="space-y-6 animate-fade-in">
-            <div className="bg-green-600 p-12 rounded-[4rem] text-white shadow-2xl shadow-green-100 border-4 border-white">
+            <div className="bg-green-600 p-6 sm:p-12 rounded-[2.5rem] sm:rounded-[4rem] text-white shadow-2xl shadow-green-100 border-4 border-white">
               <p className="text-green-100 text-[10px] font-black uppercase tracking-[0.3em] opacity-80">Subtotal Selecionado</p>
-              <h2 className="text-6xl font-black mt-3 tracking-tighter">R$ {cartTotal.toFixed(2)}</h2>
+              <h2 className="text-4xl sm:text-6xl font-black mt-3 tracking-tighter break-words">R$ {cartTotal.toFixed(2)}</h2>
               <div className="mt-6">
                 <p className="text-[11px] font-black uppercase tracking-widest text-green-100 mb-2">
                   {selectedCount} de {totalCount} itens selecionados
@@ -1983,7 +1983,7 @@ export default function App() {
                 </div>
               </div>
 
-             <div className="grid grid-cols-2 gap-4">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="bg-purple-600 p-8 rounded-[3rem] text-white shadow-2xl">
                   <p className="text-purple-100 text-[9px] font-black uppercase tracking-widest opacity-70">Gasto Acumulado</p>
                   <h2 className="text-3xl font-black mt-2 tracking-tighter">R$ {Number(effectiveHistory.stats.totalGasto).toFixed(2)}</h2>
@@ -2042,7 +2042,7 @@ export default function App() {
         onDelete={(id) => handleRemoveItem(id)}
       />
 
-      <footer className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t px-10 py-6 sm:hidden flex justify-around items-center z-50 rounded-t-[3rem] shadow-2xl">
+      <footer className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t px-4 py-4 sm:hidden flex justify-around items-center z-50 rounded-t-[2.25rem] shadow-2xl">
           {(['lista', 'carrinho', 'historico'] as TabKey[]).map(t => (
             <button key={t} onClick={() => setActiveTab(t)} className={`flex flex-col items-center gap-2 relative transition-all ${activeTab === t ? 'scale-110' : 'grayscale opacity-40 hover:opacity-100'}`}>
               <div className="text-3xl">{t === 'lista' ? '📋' : t === 'carrinho' ? '🛒' : '📅'}</div>
