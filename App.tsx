@@ -1,22 +1,27 @@
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession, AIProvider, AppSettings } from './types';
-import { api } from './services/api';
+import { api, type ResumoData } from './services/api';
 import { generateSuggestions as generateAISuggestions } from './services/ai/aiService';
 import { useAppSettings } from './store/appSettingsStore';
 import HelpLayout from './help/HelpLayout';
 import EditItemPanel, { Item as EditPanelItem } from './components/EditItemPanel';
 import CategoryPanel from './components/CategoryPanel';
 import SwipeablePendingItemCard from './components/SwipeablePendingItemCard';
+import ResumoPage from './components/resumo/ResumoPage';
 
 // --- Sub-components ---
-type TabKey = 'lista' | 'carrinho' | 'historico';
+type TabKey = 'lista' | 'carrinho' | 'historico' | 'resumo';
 type SuggestionsTab = 'frequentes' | 'ultima_compra' | 'ia';
 type HistoryQuickFilter = 'todos' | '7d' | '30d' | 'maior' | 'menor';
 type ListQuickFilter = 'todos' | 'favoritos';
+type ResumoFetchStatus = 'idle' | 'loading' | 'success' | 'error';
 const QUICK_ADD_HISTORY_KEY = 'shopping_quick_add_history';
 const ONBOARDING_FLAG_KEY = 'hasSeenOnboarding';
 const FAVORITES_STORAGE_PREFIX = 'shopping_favorites_v1';
 const MARKET_MODE_SESSION_KEY = 'shopping_market_mode_enabled';
+const RESUMO_CACHE_PREFIX = 'shopping_resumo_cache_v1';
+const RESUMO_CACHE_TTL_MS = 5 * 60 * 1000;
+const FEATURE_AI_INSIGHTS_ENABLED = String((import.meta as any).env?.VITE_FEATURE_AI_INSIGHTS || '').toLowerCase() === 'true';
 const BASE_ITEM_DICTIONARY = [
   'arroz 5kg',
   'feijao carioca',
@@ -71,6 +76,13 @@ type DuplicateDialogConfig = {
   incomingQuantity: number;
 };
 
+type AINoticeConfig = {
+  title: string;
+  message: string;
+  action?: 'open_settings';
+  actionLabel?: string;
+};
+
 type OnboardingStep = {
   title: string;
   description: string;
@@ -83,6 +95,93 @@ const normalizeText = (value: string) =>
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+
+const formatResumoPeriodKey = (mes: number, ano: number) =>
+  `${ano}-${String(mes).padStart(2, '0')}`;
+
+const getResumoPeriod = (date = new Date()) => ({
+  mes: date.getMonth() + 1,
+  ano: date.getFullYear()
+});
+
+const getResumoMonthInputValue = (date = new Date()) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+const parseResumoMonthInputValue = (value: string) => {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})$/);
+  if (!match) {
+    return getResumoPeriod();
+  }
+  const ano = Number(match[1]);
+  const mes = Number(match[2]);
+  if (!Number.isFinite(ano) || !Number.isFinite(mes) || mes < 1 || mes > 12) {
+    return getResumoPeriod();
+  }
+  return { mes, ano };
+};
+
+const buildResumoCacheKey = (userEmail: string, mes: number, ano: number) =>
+  `${RESUMO_CACHE_PREFIX}:${normalizeText(userEmail)}:${ano}-${String(mes).padStart(2, '0')}`;
+
+const readResumoCache = (userEmail: string, mes: number, ano: number) => {
+  if (typeof window === 'undefined') return null;
+  const key = buildResumoCacheKey(userEmail, mes, ano);
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    const timestamp = Number(parsed.timestamp);
+    if (!Number.isFinite(timestamp) || Date.now() - timestamp > RESUMO_CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    const data = parsed.data as ResumoData;
+    if (!data || typeof data !== 'object') {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return { data, timestamp };
+  } catch {
+    sessionStorage.removeItem(key);
+    return null;
+  }
+};
+
+const writeResumoCache = (userEmail: string, mes: number, ano: number, data: ResumoData, timestamp: number) => {
+  if (typeof window === 'undefined') return;
+  const key = buildResumoCacheKey(userEmail, mes, ano);
+  try {
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        timestamp,
+        data
+      })
+    );
+  } catch {
+    // Ignora falha de armazenamento sem quebrar o fluxo.
+  }
+};
+
+const clearResumoCacheForUser = (userEmail: string) => {
+  if (typeof window === 'undefined') return;
+  const normalizedEmail = normalizeText(userEmail);
+  const prefix = `${RESUMO_CACHE_PREFIX}:${normalizedEmail}:`;
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const key = sessionStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Ignora falha de limpeza sem quebrar o fluxo.
+  }
+};
 
 const parseQuickItemInput = (rawValue: string, fallbackQty: number) => {
   const raw = (rawValue || '').trim();
@@ -605,6 +704,50 @@ const DuplicateItemModal = ({
   );
 };
 
+const AINoticeModal = ({
+  isOpen,
+  config,
+  onClose,
+  onAction
+}: {
+  isOpen: boolean;
+  config: AINoticeConfig | null;
+  onClose: () => void;
+  onAction: () => void;
+}) => {
+  if (!isOpen || !config) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/45 backdrop-blur-sm z-[10005] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white w-full max-w-lg rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center" onClick={(e) => e.stopPropagation()}>
+        <div className="w-14 h-14 rounded-2xl border border-amber-200 bg-amber-50 mx-auto mb-5 flex items-center justify-center text-amber-600">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+        </div>
+        <h3 className="text-2xl font-black text-gray-900 tracking-tight mb-3">{config.title}</h3>
+        <p className="text-sm font-medium text-gray-600 leading-relaxed">{config.message}</p>
+        <div className="mt-7 flex flex-col sm:flex-row gap-3 sm:justify-center">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-6 py-3 rounded-2xl border border-gray-300 bg-white text-gray-700 font-black text-sm uppercase tracking-wider hover:bg-gray-100 transition-all active:scale-95"
+          >
+            Entendi
+          </button>
+          {config.action === 'open_settings' && (
+            <button
+              type="button"
+              onClick={onAction}
+              className="px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm uppercase tracking-wider transition-all active:scale-95"
+            >
+              {config.actionLabel || 'Abrir configurações'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const OnboardingModal = ({
   isOpen,
   steps,
@@ -702,7 +845,8 @@ const AppHeader = ({
   const tabRefs = useRef<Record<TabKey, HTMLButtonElement | null>>({
     lista: null,
     carrinho: null,
-    historico: null
+    historico: null,
+    resumo: null
   });
 
   const updateTabsOverflowHint = useCallback(() => {
@@ -777,12 +921,14 @@ const AppHeader = ({
     if (activeTab !== tab) return 'text-gray-400 hover:text-gray-600';
     if (tab === 'lista') return 'text-blue-600';
     if (tab === 'carrinho') return 'text-green-600';
-    return 'text-purple-600';
+    if (tab === 'historico') return 'text-purple-600';
+    return 'text-amber-600';
   };
   const indicatorClass = (tab: TabKey) => {
     if (tab === 'lista') return 'bg-blue-600';
     if (tab === 'carrinho') return 'bg-green-600';
-    return 'bg-purple-600';
+    if (tab === 'historico') return 'bg-purple-600';
+    return 'bg-amber-500';
   };
 
   return (
@@ -820,6 +966,9 @@ const AppHeader = ({
             <button onClick={() => onChangeTab('historico')} className={`px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all ${tabClass('historico')}`}>
               Historico
             </button>
+            <button onClick={() => onChangeTab('resumo')} className={`px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all ${tabClass('resumo')}`}>
+              Resumo
+            </button>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -850,8 +999,15 @@ const AppHeader = ({
 
         <div className="relative md:hidden mt-3">
           <nav ref={tabsContainerRef} className="tabs-container border border-gray-100 rounded-2xl bg-white">
-            {(['lista', 'carrinho', 'historico'] as TabKey[]).map((tab) => {
-              const label = tab === 'lista' ? `Lista (${listaCount})` : tab === 'carrinho' ? `Carrinho (${carrinhoCount})` : 'Historico';
+            {(['lista', 'carrinho', 'historico', 'resumo'] as TabKey[]).map((tab) => {
+              const label =
+                tab === 'lista'
+                  ? `Lista (${listaCount})`
+                  : tab === 'carrinho'
+                    ? `Carrinho (${carrinhoCount})`
+                    : tab === 'historico'
+                      ? 'Historico'
+                      : 'Resumo';
               const active = activeTab === tab;
               return (
                 <button
@@ -1087,9 +1243,16 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [historyData, setHistoryData] = useState<{ compras: PurchaseGroup[], stats: DashboardStats } | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [resumoSelectedMonth, setResumoSelectedMonth] = useState<string>(() => getResumoMonthInputValue());
+  const [resumoData, setResumoData] = useState<ResumoData | null>(null);
+  const [resumoLoadedPeriodKey, setResumoLoadedPeriodKey] = useState<string | null>(null);
+  const [resumoFetchedAt, setResumoFetchedAt] = useState<number | null>(null);
+  const [resumoStatus, setResumoStatus] = useState<ResumoFetchStatus>('idle');
+  const [resumoError, setResumoError] = useState('');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
   const [confirmConfig, setConfirmConfig] = useState<ConfirmDialogConfig | null>(null);
   const [duplicateConfig, setDuplicateConfig] = useState<DuplicateDialogConfig | null>(null);
+  const [aiNoticeConfig, setAiNoticeConfig] = useState<AINoticeConfig | null>(null);
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [suggestionsTab, setSuggestionsTab] = useState<SuggestionsTab>('frequentes');
@@ -1200,6 +1363,12 @@ export default function App() {
   }, [activeTab, user, itemsLoaded]);
 
   useEffect(() => {
+    if (!user) return;
+    if (activeTab !== 'resumo') return;
+    fetchResumo();
+  }, [activeTab, user, resumoSelectedMonth]);
+
+  useEffect(() => {
     if (!user || loading) return;
     const alreadySeen = localStorage.getItem(ONBOARDING_FLAG_KEY) === 'true';
     setHasSeenOnboarding(alreadySeen);
@@ -1232,6 +1401,11 @@ export default function App() {
       setItemsLoaded(false);
       setHistoryData(null);
       setHistoryLoaded(false);
+      setResumoData(null);
+      setResumoLoadedPeriodKey(null);
+      setResumoFetchedAt(null);
+      setResumoStatus('idle');
+      setResumoError('');
 
       const bootstrap = await api.bootstrap();
       if (bootstrap?.spreadsheetId) {
@@ -1577,6 +1751,58 @@ export default function App() {
     }
   };
 
+  const fetchResumo = async (options?: { force?: boolean; mes?: number; ano?: number }) => {
+    const userEmail = user?.email?.trim();
+    if (!userEmail) return;
+
+    const selectedPeriod = parseResumoMonthInputValue(resumoSelectedMonth);
+    const mes = options?.mes || selectedPeriod.mes;
+    const ano = options?.ano || selectedPeriod.ano;
+    const targetPeriodKey = formatResumoPeriodKey(mes, ano);
+
+    if (
+      !options?.force &&
+      resumoLoadedPeriodKey === targetPeriodKey &&
+      resumoFetchedAt &&
+      Date.now() - resumoFetchedAt <= RESUMO_CACHE_TTL_MS &&
+      resumoData
+    ) {
+      setResumoStatus('success');
+      setResumoError('');
+      return;
+    }
+
+    if (!options?.force) {
+      const cached = readResumoCache(userEmail, mes, ano);
+      if (cached) {
+        setResumoData(cached.data);
+        setResumoLoadedPeriodKey(targetPeriodKey);
+        setResumoFetchedAt(cached.timestamp);
+        setResumoStatus('success');
+        setResumoError('');
+        return;
+      }
+    }
+
+    setResumoStatus('loading');
+    setResumoError('');
+    try {
+      const data = await api.getResumo({ mes, ano });
+      const timestamp = Date.now();
+      writeResumoCache(userEmail, mes, ano, data, timestamp);
+      setResumoData(data);
+      setResumoLoadedPeriodKey(targetPeriodKey);
+      setResumoFetchedAt(timestamp);
+      setResumoStatus('success');
+    } catch (e: any) {
+      setResumoData(null);
+      setResumoLoadedPeriodKey(null);
+      setResumoFetchedAt(null);
+      setResumoStatus('error');
+      setResumoError(e?.message || 'Erro ao carregar resumo mensal.');
+    }
+  };
+
   useEffect(() => {
     return () => {
       if (confirmResolverRef.current) {
@@ -1593,11 +1819,20 @@ export default function App() {
   }, []);
 
   const handleLogout = () => {
+    if (user?.email) {
+      clearResumoCacheForUser(user.email);
+    }
     localStorage.removeItem('shopping_user');
     setItems([]);
     setItemsLoaded(false);
     setHistoryData(null);
     setHistoryLoaded(false);
+    setResumoData(null);
+    setResumoLoadedPeriodKey(null);
+    setResumoFetchedAt(null);
+    setResumoStatus('idle');
+    setResumoError('');
+    setResumoSelectedMonth(getResumoMonthInputValue());
     setListQuickFilter('todos');
     setHistorySearch('');
     setHistoryFilter('todos');
@@ -2004,6 +2239,14 @@ export default function App() {
       commitItems(updated);
       setHistoryLoaded(false);
       setHistoryData(null);
+      if (user?.email) {
+        clearResumoCacheForUser(user.email);
+      }
+      setResumoData(null);
+      setResumoLoadedPeriodKey(null);
+      setResumoFetchedAt(null);
+      setResumoStatus('idle');
+      setResumoError('');
       showToast('Finalizado! Clique em "Carregar Histórico" para atualizar os dados.', 'success');
       setActiveTab('historico');
     } catch (e: any) {
@@ -2016,18 +2259,33 @@ export default function App() {
   const handleGetSuggestions = async () => {
     const runtimeSettings = getRuntimeAISettings();
     if (runtimeSettings.aiProvider === 'disabled') {
-      showToast('IA desativada. Ative um provider em Configurações.', 'error');
+      showAINotice({
+        title: 'IA desativada',
+        message: 'Ative um provedor de IA nas Configurações para usar sugestões inteligentes.',
+        action: 'open_settings',
+        actionLabel: 'Abrir configurações'
+      });
       return;
     }
 
     const hasGeminiKey = !!runtimeSettings.geminiApiKey?.trim();
     const hasOpenAIKey = !!runtimeSettings.openaiApiKey?.trim();
     if (runtimeSettings.aiProvider === 'gemini' && !hasGeminiKey) {
-      showToast('API key ausente para Gemini. Configure antes de pedir IA.', 'error');
+      showAINotice({
+        title: 'Chave Gemini ausente',
+        message: 'Configure sua API key do Gemini para continuar usando sugestões de IA.',
+        action: 'open_settings',
+        actionLabel: 'Configurar chave'
+      });
       return;
     }
     if (runtimeSettings.aiProvider === 'openai' && !hasOpenAIKey) {
-      showToast('API key ausente para OpenAI. Configure antes de pedir IA.', 'error');
+      showAINotice({
+        title: 'Chave OpenAI ausente',
+        message: 'Configure sua API key da OpenAI para continuar usando sugestões de IA.',
+        action: 'open_settings',
+        actionLabel: 'Configurar chave'
+      });
       return;
     }
 
@@ -2085,12 +2343,62 @@ export default function App() {
     });
   };
 
+  const handleResumoMonthChange = (nextMonth: string) => {
+    if (!/^\d{4}-\d{2}$/.test(String(nextMonth || ''))) return;
+    if (nextMonth === resumoSelectedMonth) return;
+    setResumoSelectedMonth(nextMonth);
+    setResumoData(null);
+    setResumoLoadedPeriodKey(null);
+    setResumoFetchedAt(null);
+    setResumoStatus('idle');
+    setResumoError('');
+  };
+
+  const handleResumoRepeatLastPurchase = async () => {
+    if (!resumoLastPurchase?.id) {
+      showToast('Nenhuma compra disponível para repetir.', 'info');
+      return;
+    }
+    await handleReloadFromHistory(resumoLastPurchase.id);
+  };
+
+  const handleResumoGenerateListWithAI = () => {
+    setActiveTab('lista');
+    setSuggestionsTab('ia');
+    window.requestAnimationFrame(() => {
+      void handleGetSuggestions();
+    });
+  };
+
+  const handleResumoCreateNewList = () => {
+    setNewItemName('');
+    setNewItemQtd(1);
+    setSuggestionsTab('frequentes');
+    focusQuickAddInput();
+    showToast('Pronto para criar uma nova lista.', 'info');
+  };
+
   const handleToggleMarketMode = () => {
     setIsMarketMode((prev) => {
       const next = !prev;
       showToast(next ? 'Modo mercado ativado.' : 'Modo mercado desativado.', 'info');
       return next;
     });
+  };
+
+  const showAINotice = (config: AINoticeConfig) => {
+    setAiNoticeConfig(config);
+  };
+
+  const closeAINotice = () => {
+    setAiNoticeConfig(null);
+  };
+
+  const handleAINoticeAction = () => {
+    if (aiNoticeConfig?.action === 'open_settings') {
+      setIsDebugOpen(true);
+    }
+    setAiNoticeConfig(null);
   };
 
   const buildShareListText = () => {
@@ -2244,6 +2552,23 @@ export default function App() {
       )
     ).slice(0, 8);
   })();
+  const resumoSelectedPeriod = parseResumoMonthInputValue(resumoSelectedMonth);
+  const resumoMonthLabel = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(
+    new Date(resumoSelectedPeriod.ano, resumoSelectedPeriod.mes - 1, 1)
+  );
+  const resumoMonthlyOverview = resumoData?.mes || { gastoTotal: 0, totalItens: 0, totalCompras: 0 };
+  const resumoTopCategories = resumoData?.topCategorias || [];
+  const resumoFrequentItems = resumoData?.itensFrequentes || [];
+  const resumoLastPurchase = resumoData?.ultimaCompra || null;
+  const resumoLoading = resumoStatus === 'loading' || resumoStatus === 'idle';
+  const resumoHasContent =
+    resumoMonthlyOverview.gastoTotal > 0 ||
+    resumoMonthlyOverview.totalItens > 0 ||
+    resumoMonthlyOverview.totalCompras > 0 ||
+    resumoTopCategories.length > 0 ||
+    resumoFrequentItems.length > 0 ||
+    !!resumoLastPurchase;
+  const resumoIsEmpty = resumoStatus === 'success' && !resumoHasContent;
 
   return (
     <div className="max-w-4xl mx-auto pb-24 min-h-screen flex flex-col bg-gray-50 overflow-x-hidden">
@@ -2259,6 +2584,12 @@ export default function App() {
         isOpen={!!duplicateConfig}
         config={duplicateConfig}
         onSelect={handleDuplicateResult}
+      />
+      <AINoticeModal
+        isOpen={!!aiNoticeConfig}
+        config={aiNoticeConfig}
+        onClose={closeAINotice}
+        onAction={handleAINoticeAction}
       />
       <OnboardingModal
         isOpen={isOnboardingOpen && !hasSeenOnboarding}
@@ -2526,6 +2857,62 @@ export default function App() {
           </div>
         )}
 
+        {activeTab === 'resumo' && (
+          <div className="space-y-4 sm:space-y-5 animate-fade-in">
+            <section className="bg-white border border-gray-100 rounded-[2rem] p-4 sm:p-5 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Periodo do resumo</p>
+                  <p className="text-sm font-semibold text-gray-700 mt-1 capitalize">{resumoMonthLabel}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="resumo-month" className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                    Mes
+                  </label>
+                  <input
+                    id="resumo-month"
+                    type="month"
+                    value={resumoSelectedMonth}
+                    max="2099-12"
+                    onChange={(event) => handleResumoMonthChange(event.target.value)}
+                    className="h-11 px-3 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-900 outline-none focus:ring-4 focus:ring-emerald-100"
+                  />
+                </div>
+              </div>
+            </section>
+            {resumoStatus === 'error' ? (
+              <EmptyStateCard
+                icon="⚠️"
+                title="Falha ao carregar o resumo"
+                message={resumoError || 'Não foi possível carregar os dados de resumo agora.'}
+                ctaLabel="Tentar novamente"
+                onCta={fetchResumo}
+              />
+            ) : resumoIsEmpty ? (
+              <EmptyStateCard
+                icon="📊"
+                title="Resumo sem dados no período"
+                message="Finalize compras no período selecionado para visualizar os indicadores automáticos."
+                ctaLabel="Ir para lista"
+                onCta={() => setActiveTab('lista')}
+              />
+            ) : (
+              <ResumoPage
+                loading={resumoLoading}
+                monthLabel={resumoMonthLabel}
+                monthlyOverview={resumoMonthlyOverview}
+                topCategories={resumoTopCategories}
+                frequentItems={resumoFrequentItems}
+                lastPurchase={resumoLastPurchase}
+                showAIInsights={FEATURE_AI_INSIGHTS_ENABLED}
+                onRepeatLastPurchase={handleResumoRepeatLastPurchase}
+                onGenerateListWithAI={handleResumoGenerateListWithAI}
+                onCreateNewList={handleResumoCreateNewList}
+              />
+            )}
+          </div>
+        )}
+
         {activeTab === 'historico' && (
           <div className="space-y-6 animate-fade-in">
             {!historyLoaded && (
@@ -2654,12 +3041,12 @@ export default function App() {
       />
 
       <footer className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t px-4 py-4 sm:hidden flex justify-around items-center z-50 rounded-t-[2.25rem] shadow-2xl">
-          {(['lista', 'carrinho', 'historico'] as TabKey[]).map(t => (
+          {(['lista', 'carrinho', 'historico', 'resumo'] as TabKey[]).map(t => (
             <button key={t} onClick={() => setActiveTab(t)} className={`flex flex-col items-center gap-2 relative transition-all ${activeTab === t ? 'scale-110' : 'grayscale opacity-40 hover:opacity-100'}`}>
-              <div className="text-3xl">{t === 'lista' ? '📋' : t === 'carrinho' ? '🛒' : '📅'}</div>
+              <div className="text-3xl">{t === 'lista' ? '📋' : t === 'carrinho' ? '🛒' : t === 'historico' ? '📅' : '📊'}</div>
               <span className={`text-[9px] font-black uppercase tracking-tighter ${
                 activeTab === t
-                  ? (t === 'lista' ? 'text-blue-600' : t === 'carrinho' ? 'text-green-600' : 'text-purple-600')
+                  ? (t === 'lista' ? 'text-blue-600' : t === 'carrinho' ? 'text-green-600' : t === 'historico' ? 'text-purple-600' : 'text-amber-600')
                   : 'text-gray-500'
               }`}>{t}</span>
               {t === 'carrinho' && boughtItems.length > 0 && (

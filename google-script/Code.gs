@@ -23,7 +23,7 @@ const ABAS = {
 
 const HEADERS = {
   LISTA: ["id", "nome", "quantidade", "categoria", "precoestimado", "status", "dataadicao"],
-  HISTORICO: ["idcompra", "data", "nome", "quantidade", "categoria", "preco", "total"],
+  HISTORICO: ["idcompra", "data", "nome", "quantidade", "categoria", "preco", "total", "user_email"],
   CATEGORIAS: ["id", "nome", "icone", "cor"]
 };
 
@@ -85,6 +85,9 @@ function doGet(e) {
       case "obterHistorico":
         result = obterHistorico();
         break;
+      case "resumo":
+        result = obterResumo(payload.mes || params.mes, payload.ano || params.ano, payload.userEmail || params.userEmail);
+        break;
       case "carregarListaDoHistorico":
         result = carregarListaDoHistorico(payload.idCompra || params.idCompra);
         break;
@@ -119,6 +122,7 @@ function doGet(e) {
             "removerItem",
             "finalizarCompra",
             "obterHistorico",
+            "resumo",
             "carregarListaDoHistorico",
             "ping",
             "verificarEstrutura"
@@ -313,7 +317,7 @@ function setupSpreadsheetStructure(ss) {
   const sConfig = getOrCreateSheet(ss, ABAS.CONFIG);
 
   configureSheetHeader(sLista, ["ID", "Nome", "Quantidade", "Categoria", "Preço Estimado", "Status", "Data Adição"]);
-  configureSheetHeader(sHistorico, ["ID Compra", "Data", "Nome", "Quantidade", "Categoria", "Preço", "Total"]);
+  configureSheetHeader(sHistorico, ["ID Compra", "Data", "Nome", "Quantidade", "Categoria", "Preço", "Total", "User Email"]);
   configureSheetHeader(sCategorias, ["ID", "Nome", "Ícone", "Cor"]);
   configureSheetHeader(sConfig, ["key", "value"]);
 
@@ -493,6 +497,50 @@ function normalizeText(value) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function collapseSpaces(value) {
+  return (value == null ? "" : String(value)).replace(/\s+/g, " ").trim();
+}
+
+function normalizeCategoryLabel(value) {
+  const raw = collapseSpaces(value);
+  return raw || "Sem categoria";
+}
+
+function normalizeItemName(value) {
+  const raw = collapseSpaces(value);
+  return raw || "Item sem nome";
+}
+
+function parseDateFlexible(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    const millis = Math.round((value - 25569) * 86400000);
+    const dateFromSerial = new Date(millis);
+    if (!isNaN(dateFromSerial.getTime())) return dateFromSerial;
+  }
+
+  const raw = collapseSpaces(value);
+  if (!raw) return null;
+
+  const directDate = new Date(raw);
+  if (!isNaN(directDate.getTime())) return directDate;
+
+  const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const year = Number(match[3]);
+  const hour = Number(match[4] || "0");
+  const minute = Number(match[5] || "0");
+  const second = Number(match[6] || "0");
+  const parsed = new Date(year, month, day, hour, minute, second);
+  return isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function detectHeaderRow(firstRow, expectedHeaders) {
@@ -744,6 +792,7 @@ function finalizarCompra() {
   const listaCtx = readSheetRows(ABAS.LISTA, HEADERS.LISTA);
   const sLista = listaCtx.sheet;
   const sHist = getSheetOrThrow(ABAS.HISTORICO);
+  const userEmail = getCurrentUserEmail();
 
   const data = listaCtx.values;
   const idCompra = "C-" + new Date().getTime();
@@ -756,7 +805,7 @@ function finalizarCompra() {
     if (normalizeStatus(data[i][5]) === "comprado") {
       const qtd = parseNumber(data[i][2]);
       const preco = parseNumber(data[i][4]);
-      sHist.appendRow([idCompra, dataHoje, data[i][1], qtd, data[i][3], preco, (qtd * preco)]);
+      sHist.appendRow([idCompra, dataHoje, data[i][1], qtd, data[i][3], preco, (qtd * preco), userEmail]);
       sLista.deleteRow(i + 1);
       count++;
     }
@@ -845,6 +894,130 @@ function obterHistorico() {
       gastoMedio: (totalGasto / (totalCompras || 1)).toFixed(2),
       categoriaFavorita: sortedCats[0] || ""
     }
+  };
+}
+
+function obterResumo(mes, ano, userEmail) {
+  const ctx = readSheetRows(ABAS.HISTORICO, HEADERS.HISTORICO);
+  const rows = ctx.rows;
+
+  const currentUserEmail = normalizeEmail(userEmail || getCurrentUserEmail());
+  const now = new Date();
+  const targetMonth = Math.min(12, Math.max(1, parseInt(mes, 10) || (now.getMonth() + 1)));
+  const targetYear = parseInt(ano, 10) || now.getFullYear();
+  const topLimit = 5;
+
+  const categoryMap = {};
+  const itemFreqMap = {};
+  const purchaseIds = {};
+  let totalGasto = 0;
+  let totalItens = 0;
+  let latestCompra = null;
+
+  let userEmailColIndex = -1;
+  if (ctx.headerOffset === 1 && ctx.values && ctx.values.length) {
+    const header = ctx.values[0].map(normalizeText);
+    userEmailColIndex = header.indexOf("user_email");
+    if (userEmailColIndex === -1) userEmailColIndex = header.indexOf("useremail");
+    if (userEmailColIndex === -1) userEmailColIndex = header.indexOf("email");
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+
+    if (userEmailColIndex >= 0) {
+      const rowEmail = normalizeEmail(row[userEmailColIndex]);
+      if (rowEmail && rowEmail !== currentUserEmail) {
+        continue;
+      }
+    }
+
+    const parsedDate = parseDateFlexible(row[1]);
+    if (!parsedDate) continue;
+    if (parsedDate.getFullYear() !== targetYear || (parsedDate.getMonth() + 1) !== targetMonth) {
+      continue;
+    }
+
+    const idCompra = collapseSpaces(row[0]) || ("SEM-ID-" + i);
+    const itemNome = normalizeItemName(row[2]);
+    const categoria = normalizeCategoryLabel(row[4]);
+    const qtd = Math.max(1, parseNumber(row[3]) || 1);
+    const preco = parseNumber(row[5]);
+    let subtotal = parseNumber(row[6]);
+    if (!subtotal && (qtd || preco)) {
+      subtotal = qtd * preco;
+    }
+    subtotal = Math.max(0, subtotal || 0);
+
+    totalGasto += subtotal;
+    totalItens += qtd;
+    purchaseIds[idCompra] = true;
+
+    const categoriaKey = normalizeText(categoria);
+    if (!categoryMap[categoriaKey]) {
+      categoryMap[categoriaKey] = { categoria: categoria, gasto: 0, ocorrencias: 0 };
+    }
+    categoryMap[categoriaKey].gasto += subtotal;
+    categoryMap[categoriaKey].ocorrencias += 1;
+
+    const itemKey = normalizeText(itemNome);
+    if (!itemFreqMap[itemKey]) {
+      itemFreqMap[itemKey] = { nome: itemNome, vezes: 0 };
+    }
+    itemFreqMap[itemKey].vezes += 1;
+
+    if (!latestCompra || parsedDate > latestCompra.dateObj) {
+      latestCompra = {
+        id: idCompra,
+        dateObj: parsedDate
+      };
+    }
+  }
+
+  const totalCompras = Object.keys(purchaseIds).length;
+  const totalCategoryOccurrences = Object.keys(categoryMap).reduce(function(acc, k) {
+    return acc + (categoryMap[k].ocorrencias || 0);
+  }, 0) || 1;
+
+  const topCategorias = Object.keys(categoryMap)
+    .map(function(key) { return categoryMap[key]; })
+    .sort(function(a, b) {
+      if (b.gasto !== a.gasto) return b.gasto - a.gasto;
+      return b.ocorrencias - a.ocorrencias;
+    })
+    .slice(0, topLimit)
+    .map(function(entry) {
+      const percentual = totalGasto > 0
+        ? Math.round((entry.gasto / totalGasto) * 100)
+        : Math.round((entry.ocorrencias / totalCategoryOccurrences) * 100);
+      return {
+        categoria: entry.categoria,
+        percentual: percentual
+      };
+    });
+
+  const itensFrequentes = Object.keys(itemFreqMap)
+    .map(function(key) { return itemFreqMap[key]; })
+    .sort(function(a, b) { return b.vezes - a.vezes; })
+    .slice(0, topLimit);
+
+  const timeZone = Session.getScriptTimeZone() || "GMT-3";
+  const ultimaCompra = latestCompra
+    ? {
+        id: latestCompra.id,
+        data: Utilities.formatDate(latestCompra.dateObj, timeZone, "yyyy-MM-dd'T'HH:mm:ssXXX")
+      }
+    : null;
+
+  return {
+    mes: {
+      gastoTotal: Number(totalGasto.toFixed(2)),
+      totalItens: totalItens,
+      totalCompras: totalCompras
+    },
+    topCategorias: topCategorias,
+    itensFrequentes: itensFrequentes,
+    ultimaCompra: ultimaCompra
   };
 }
 

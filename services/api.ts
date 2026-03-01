@@ -1,6 +1,34 @@
 
 import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession } from '../types';
 
+export interface ResumoMesData {
+  gastoTotal: number;
+  totalItens: number;
+  totalCompras: number;
+}
+
+export interface ResumoCategoriaData {
+  categoria: string;
+  percentual: number;
+}
+
+export interface ResumoItemFrequenteData {
+  nome: string;
+  vezes: number;
+}
+
+export interface ResumoUltimaCompraData {
+  id: string | number;
+  data: string;
+}
+
+export interface ResumoData {
+  mes: ResumoMesData;
+  topCategorias: ResumoCategoriaData[];
+  itensFrequentes: ResumoItemFrequenteData[];
+  ultimaCompra: ResumoUltimaCompraData | null;
+}
+
 const FALLBACK_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxgt0XKD21dsD8EqMNQv0-8VFvBGjrktswc8t6FC8kwKdVsIZyoelpKO4rRiXOrXBQ/exec";
 
 function buildRequestUrl(baseUrl: string, action: string, data: any, user: UserSession | null, options?: { manualUrl?: string; manualKey?: string; includeOverrides?: boolean }) {
@@ -202,6 +230,37 @@ class ShoppingAPI {
   async reloadList(purchaseId: string | number): Promise<void> {
     const result = await callBackend('carregarListaDoHistorico', { idCompra: purchaseId });
     assertMutationSuccess('carregarListaDoHistorico', result);
+  }
+
+  async getResumo(params?: { mes?: number; ano?: number }): Promise<ResumoData> {
+    const payload = params ? { mes: params.mes, ano: params.ano } : null;
+    const data = await callBackend('resumo', payload);
+
+    return {
+      mes: {
+        gastoTotal: Number(data?.mes?.gastoTotal || 0),
+        totalItens: Number(data?.mes?.totalItens || 0),
+        totalCompras: Number(data?.mes?.totalCompras || 0)
+      },
+      topCategorias: Array.isArray(data?.topCategorias)
+        ? data.topCategorias.map((item: any) => ({
+            categoria: String(item?.categoria || '').trim(),
+            percentual: Number(item?.percentual || 0)
+          })).filter((item: ResumoCategoriaData) => !!item.categoria)
+        : [],
+      itensFrequentes: Array.isArray(data?.itensFrequentes)
+        ? data.itensFrequentes.map((item: any) => ({
+            nome: String(item?.nome || '').trim(),
+            vezes: Number(item?.vezes || 0)
+          })).filter((item: ResumoItemFrequenteData) => !!item.nome)
+        : [],
+      ultimaCompra: data?.ultimaCompra?.id
+        ? {
+            id: data.ultimaCompra.id,
+            data: String(data.ultimaCompra.data || '')
+          }
+        : null
+    };
   }
 }
 
