@@ -22,6 +22,8 @@ const MARKET_MODE_SESSION_KEY = 'shopping_market_mode_enabled';
 const RESUMO_CACHE_PREFIX = 'shopping_resumo_cache_v1';
 const RESUMO_CACHE_TTL_MS = 5 * 60 * 1000;
 const FEATURE_AI_INSIGHTS_ENABLED = String((import.meta as any).env?.VITE_FEATURE_AI_INSIGHTS || '').toLowerCase() === 'true';
+const AUTO_CLEAR_RUNTIME_CACHE_ON_START =
+  String((import.meta as any).env?.VITE_AUTO_CLEAR_RUNTIME_CACHE || 'true').toLowerCase() !== 'false';
 const BASE_ITEM_DICTIONARY = [
   'arroz 5kg',
   'feijao carioca',
@@ -181,6 +183,39 @@ const clearResumoCacheForUser = (userEmail: string) => {
   } catch {
     // Ignora falha de limpeza sem quebrar o fluxo.
   }
+};
+
+const clearRuntimeCachesOnStartup = () => {
+  if (typeof window === 'undefined') return;
+  if (!AUTO_CLEAR_RUNTIME_CACHE_ON_START) return;
+
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const key = sessionStorage.key(i);
+      if (!key) continue;
+      if (key.startsWith(`${RESUMO_CACHE_PREFIX}:`)) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Ignora erro de sessão sem interromper o app.
+  }
+
+  // Limpa apenas overrides técnicos para evitar usar URL/chave antiga em mobile.
+  const debugOverrideKeys = [
+    'DEBUG_APPS_SCRIPT_URL',
+    'DEBUG_API_KEY',
+    'DEBUG_OPENAI_API_KEY',
+    'DEBUG_AI_PROVIDER',
+    'DEBUG_CLIENT_ID'
+  ];
+  debugOverrideKeys.forEach((key) => {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignora erro de storage.
+    }
+  });
 };
 
 const parseQuickItemInput = (rawValue: string, fallbackQty: number) => {
@@ -1342,6 +1377,7 @@ export default function App() {
   ];
 
   useEffect(() => {
+    clearRuntimeCachesOnStartup();
     const savedUser = localStorage.getItem('shopping_user');
     if (savedUser) setUser(JSON.parse(savedUser));
     else setLoading(false);
