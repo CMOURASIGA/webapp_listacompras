@@ -2155,6 +2155,87 @@ export default function App() {
     }
   };
 
+  const removeItemsInBulk = async (itemIds: Array<string | number>) => {
+    const BATCH_SIZE = 8;
+    let removedCount = 0;
+    let failedCount = 0;
+
+    for (let index = 0; index < itemIds.length; index += BATCH_SIZE) {
+      const batch = itemIds.slice(index, index + BATCH_SIZE);
+      const results = await Promise.allSettled(batch.map((itemId) => api.removeItem(itemId)));
+
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          removedCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      });
+    }
+
+    return { removedCount, failedCount };
+  };
+
+  const handleBatchClearPendingItems = async () => {
+    const pendingTargets = items.filter(
+      (item) =>
+        item.status === 'pendente' &&
+        (catFilter === 'todos' || item.categoria === catFilter) &&
+        (listQuickFilter === 'todos' || item.isFavorito)
+    );
+    if (!pendingTargets.length) {
+      showToast('Nenhum item pendente para limpar no filtro atual.', 'info');
+      return;
+    }
+
+    const totalPending = items.filter((item) => item.status === 'pendente').length;
+    const isFiltering = catFilter !== 'todos' || listQuickFilter !== 'todos';
+    const targetCount = pendingTargets.length;
+    const countLabel = targetCount === 1 ? '1 item' : `${targetCount} itens`;
+    const confirmed = await requestConfirmation({
+      title: 'Limpar itens em lote',
+      message: isFiltering
+        ? 'Os itens pendentes visíveis no filtro atual serão removidos de uma vez.'
+        : 'Todos os itens pendentes da lista serão removidos de uma vez.',
+      details: [
+        `${countLabel} ${targetCount === 1 ? 'será removido' : 'serão removidos'}.`,
+        ...(isFiltering ? [`Pendentes totais na lista: ${totalPending}`] : [])
+      ],
+      confirmLabel: 'Sim, limpar em lote',
+      cancelLabel: 'Não, cancelar',
+      intent: 'danger'
+    });
+    if (!confirmed) return;
+
+    setLoading(true);
+    try {
+      const { removedCount, failedCount } = await removeItemsInBulk(
+        pendingTargets.map((item) => item.id)
+      );
+      const refreshed = await api.getItems();
+      commitItems(refreshed);
+      if (editingItemId !== null && !refreshed.some((item) => String(item.id) === String(editingItemId))) {
+        handleCancelEditItem();
+      }
+
+      if (failedCount === 0) {
+        showToast(
+          `${removedCount} ${removedCount === 1 ? 'item removido' : 'itens removidos'} em lote.`,
+          'success'
+        );
+      } else {
+        showToast(
+          `${removedCount} removidos e ${failedCount} com falha. Tente novamente para concluir a limpeza.`,
+          'error'
+        );
+      }
+    } catch (e: any) {
+      showToast(e?.message || 'Erro ao limpar itens em lote', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleStartEditItem = (item: ShoppingItem) => {
     setEditingItemId(item.id);
   };
@@ -2759,6 +2840,14 @@ export default function App() {
                      className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all active:scale-95"
                    >
                      📤 Compartilhar lista
+                   </button>
+                   <button
+                     type="button"
+                     onClick={handleBatchClearPendingItems}
+                     disabled={pendingItems.length === 0 || loading}
+                     className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+                   >
+                     🧹 Limpar em lote
                    </button>
                    <button
                      type="button"
