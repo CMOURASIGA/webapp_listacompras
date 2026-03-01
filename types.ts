@@ -48,3 +48,18 @@ export interface UserSession {
   name: string;
   picture: string;
 }
+
+export type AIProvider = 'disabled' | 'gemini' | 'openai';
+
+export interface AppSettings {
+  scriptUrl: string;
+  googleClientId: string;
+  aiProvider: AIProvider;
+  geminiApiKey?: string;
+  openaiApiKey?: string;
+}
+
+export interface ItemSuggestion {
+  name: string;
+  source: Exclude<AIProvider, 'disabled'>;
+}

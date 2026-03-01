@@ -2,6 +2,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { AppSettingsProvider } from './store/appSettingsStore';
+import { NotificationsProvider } from './store/notificationsStore';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -11,6 +13,10 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <App />
+    <AppSettingsProvider>
+      <NotificationsProvider>
+        <App />
+      </NotificationsProvider>
+    </AppSettingsProvider>
   </React.StrictMode>
 );
