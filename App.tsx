@@ -593,6 +593,22 @@ const LoadingOverlay = ({ message = "Sincronizando..." }) => (
   </div>
 );
 
+const ProcessingModal = ({ isOpen, message }: { isOpen: boolean; message: string }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[10006] flex items-center justify-center p-4">
+      <div className="w-full max-w-sm rounded-[2rem] border border-gray-200 bg-white p-7 text-center shadow-2xl">
+        <div className="mx-auto h-12 w-12 rounded-2xl border border-blue-100 bg-blue-50 flex items-center justify-center">
+          <span className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+        <p className="mt-4 text-base font-black tracking-tight text-gray-900">Processando</p>
+        <p className="mt-1 text-sm font-semibold text-gray-500">{message}</p>
+      </div>
+    </div>
+  );
+};
+
 const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
   useEffect(() => {
     const timer = setTimeout(onClose, 4000);
@@ -1363,12 +1379,6 @@ export default function App() {
   }, [activeTab, user, itemsLoaded]);
 
   useEffect(() => {
-    if (!user) return;
-    if (activeTab !== 'resumo') return;
-    fetchResumo();
-  }, [activeTab, user, resumoSelectedMonth]);
-
-  useEffect(() => {
     if (!user || loading) return;
     const alreadySeen = localStorage.getItem(ONBOARDING_FLAG_KEY) === 'true';
     setHasSeenOnboarding(alreadySeen);
@@ -1795,11 +1805,18 @@ export default function App() {
       setResumoFetchedAt(timestamp);
       setResumoStatus('success');
     } catch (e: any) {
+      const rawMessage = String(e?.message || '');
+      let friendlyMessage = rawMessage || 'Erro ao carregar resumo mensal.';
+      if (/Ação não reconhecida:\s*resumo/i.test(rawMessage)) {
+        friendlyMessage = 'A implantação atual do Apps Script não possui a ação "resumo". Reimplante a versão mais recente do Code.gs.';
+      } else if (/failed to fetch|network|err_failed|conectar|redirecionamento/i.test(rawMessage)) {
+        friendlyMessage = 'Falha de conexão com o Apps Script (comum em rede móvel). Verifique internet, login Google no navegador e URL /exec publicada.';
+      }
       setResumoData(null);
       setResumoLoadedPeriodKey(null);
       setResumoFetchedAt(null);
       setResumoStatus('error');
-      setResumoError(e?.message || 'Erro ao carregar resumo mensal.');
+      setResumoError(friendlyMessage);
     }
   };
 
@@ -2354,6 +2371,10 @@ export default function App() {
     setResumoError('');
   };
 
+  const handleRequestResumo = () => {
+    void fetchResumo();
+  };
+
   const handleResumoRepeatLastPurchase = async () => {
     if (!resumoLastPurchase?.id) {
       showToast('Nenhuma compra disponível para repetir.', 'info');
@@ -2560,7 +2581,8 @@ export default function App() {
   const resumoTopCategories = resumoData?.topCategorias || [];
   const resumoFrequentItems = resumoData?.itensFrequentes || [];
   const resumoLastPurchase = resumoData?.ultimaCompra || null;
-  const resumoLoading = resumoStatus === 'loading' || resumoStatus === 'idle';
+  const resumoIdle = resumoStatus === 'idle';
+  const resumoLoading = resumoStatus === 'loading';
   const resumoHasContent =
     resumoMonthlyOverview.gastoTotal > 0 ||
     resumoMonthlyOverview.totalItens > 0 ||
@@ -2590,6 +2612,10 @@ export default function App() {
         config={aiNoticeConfig}
         onClose={closeAINotice}
         onAction={handleAINoticeAction}
+      />
+      <ProcessingModal
+        isOpen={activeTab === 'resumo' && resumoLoading}
+        message="Gerando o resumo mensal. Aguarde alguns segundos."
       />
       <OnboardingModal
         isOpen={isOnboardingOpen && !hasSeenOnboarding}
@@ -2865,7 +2891,15 @@ export default function App() {
                   <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Periodo do resumo</p>
                   <p className="text-sm font-semibold text-gray-700 mt-1 capitalize">{resumoMonthLabel}</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRequestResumo}
+                    disabled={resumoLoading}
+                    className="min-h-[44px] px-4 rounded-xl bg-emerald-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {resumoLoading ? 'Processando...' : 'Solicitar resumo'}
+                  </button>
                   <label htmlFor="resumo-month" className="text-[10px] font-black uppercase tracking-widest text-gray-500">
                     Mes
                   </label>
@@ -2880,13 +2914,21 @@ export default function App() {
                 </div>
               </div>
             </section>
-            {resumoStatus === 'error' ? (
+            {resumoIdle ? (
+              <EmptyStateCard
+                icon="📈"
+                title="Resumo aguardando solicitação"
+                message={'Selecione o mês e clique em "Solicitar resumo" para carregar os indicadores.'}
+                ctaLabel="Solicitar resumo"
+                onCta={handleRequestResumo}
+              />
+            ) : resumoStatus === 'error' ? (
               <EmptyStateCard
                 icon="⚠️"
                 title="Falha ao carregar o resumo"
                 message={resumoError || 'Não foi possível carregar os dados de resumo agora.'}
                 ctaLabel="Tentar novamente"
-                onCta={fetchResumo}
+                onCta={handleRequestResumo}
               />
             ) : resumoIsEmpty ? (
               <EmptyStateCard
