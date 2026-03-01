@@ -5,6 +5,7 @@ import { generateSuggestions as generateAISuggestions } from './services/ai/aiSe
 import { useAppSettings } from './store/appSettingsStore';
 import HelpLayout from './help/HelpLayout';
 import EditItemPanel, { Item as EditPanelItem } from './components/EditItemPanel';
+import CategoryPanel from './components/CategoryPanel';
 
 // --- Sub-components ---
 type TabKey = 'lista' | 'carrinho' | 'historico';
@@ -630,7 +631,15 @@ const AppHeader = ({
       <header className="bg-white/90 backdrop-blur-xl border-b border-gray-100 px-3 sm:px-6 py-3 sm:py-4 sticky top-0 z-50 overflow-x-clip">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 sm:gap-4 min-w-0">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-            <div className="w-10 h-10 min-w-[40px] min-h-[40px] shrink-0 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-xl shadow-blue-100">L</div>
+            <div className="w-10 h-10 min-w-[40px] min-h-[40px] shrink-0 rounded-2xl overflow-hidden shadow-xl shadow-blue-100 bg-blue-600">
+              <img
+                src="/icons/icon-192-v2.png"
+                alt="Shopping Pro"
+                className="w-full h-full object-cover"
+                loading="eager"
+                decoding="async"
+              />
+            </div>
             <div className="min-w-0">
               <h1 className="font-black text-gray-900 text-base sm:text-xl tracking-tight whitespace-nowrap overflow-hidden text-ellipsis max-w-[120px] sm:max-w-[220px] md:max-w-none">
                 Shopping Pro
@@ -1520,26 +1529,55 @@ export default function App() {
   };
 
   const handleAddCategory = async () => {
-    if (!newCategoryName.trim()) {
+    const categoryName = newCategoryName.trim();
+    if (!categoryName) {
       showToast('Informe o nome da categoria.', 'error');
       return;
     }
+    const categoryIcon = (newCategoryIcon || '📦').trim() || '📦';
+    const categoryColor = (newCategoryColor || '#9E9E9E').trim() || '#9E9E9E';
 
     setLoading(true);
     try {
       const added = await api.addCategory({
-        nome: newCategoryName.trim(),
-        icone: (newCategoryIcon || '📦').trim(),
-        cor: (newCategoryColor || '#9E9E9E').trim()
+        nome: categoryName,
+        icone: categoryIcon,
+        cor: categoryColor
       });
-      const updatedCats = await api.getCategories();
-      setCategories(updatedCats);
-      setNewItemCat(added?.nome || newCategoryName.trim());
+
+      const selectedCategoryName = (added?.nome || categoryName).trim();
+      const optimisticCategory: Category = {
+        id: String(added?.id ?? `temp-${Date.now()}`),
+        nome: selectedCategoryName,
+        icone: (added?.icone || categoryIcon).trim(),
+        cor: (added?.cor || categoryColor).trim()
+      };
+
+      setCategories((prev) => {
+        const exists = prev.some((cat) => normalizeText(cat.nome) === normalizeText(selectedCategoryName));
+        if (exists) {
+          return prev.map((cat) =>
+            normalizeText(cat.nome) === normalizeText(selectedCategoryName)
+              ? { ...cat, ...optimisticCategory, id: cat.id }
+              : cat
+          );
+        }
+        return [...prev, optimisticCategory];
+      });
+
+      setNewItemCat(selectedCategoryName);
       setNewCategoryName('');
       setNewCategoryIcon('📦');
       setNewCategoryColor('#9E9E9E');
       setShowNewCategoryForm(false);
       showToast('Categoria adicionada!', 'success');
+
+      try {
+        const updatedCats = await api.getCategories();
+        setCategories(updatedCats);
+      } catch {
+        // Keeps optimistic category visible if category refresh fails.
+      }
     } catch (e: any) {
       const msg = e?.message || 'Erro ao adicionar categoria';
       if (msg.includes('Ação não reconhecida')) {
@@ -1825,8 +1863,8 @@ export default function App() {
                     <select className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100 appearance-none" value={newItemCat} onChange={e => setNewItemCat(e.target.value)}>
                       {categories.map(c => <option key={c.id} value={c.nome}>{c.icone} {c.nome}</option>)}
                     </select>
-                    <button type="button" onClick={() => setShowNewCategoryForm(v => !v)} className="w-full mt-2 bg-blue-50 text-blue-700 border border-blue-200 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-100 transition-all active:scale-95">
-                      {showNewCategoryForm ? 'Fechar Cadastro de Categoria' : 'Cadastrar Nova Categoria'}
+                    <button type="button" onClick={() => setShowNewCategoryForm(true)} className="w-full mt-2 bg-blue-50 text-blue-700 border border-blue-200 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-100 transition-all active:scale-95">
+                      Cadastrar Nova Categoria
                     </button>
                   </div>
                   <div className="space-y-2">
@@ -1834,21 +1872,6 @@ export default function App() {
                     <input type="number" min={0} step="0.01" inputMode="decimal" className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100" value={newItemPrice} onChange={e => setNewItemPrice(e.target.value)} />
                   </div>
                 </div>
-                {showNewCategoryForm && (
-                  <div className="bg-gray-50 border border-gray-100 rounded-3xl p-5 space-y-4">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-gray-500">Adicionar Categoria</h3>
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <input type="text" placeholder="Nome" className="bg-white px-4 py-3 rounded-2xl border border-gray-200 text-sm font-black text-gray-900 outline-none focus:ring-4 focus:ring-blue-100" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} />
-                        <input type="text" placeholder="Ícone (ex: 🍞)" className="bg-white px-4 py-3 rounded-2xl border border-gray-200 text-sm font-black text-gray-900 outline-none focus:ring-4 focus:ring-blue-100" value={newCategoryIcon} onChange={e => setNewCategoryIcon(e.target.value)} />
-                        <input type="color" className="w-full h-12 bg-white p-2 rounded-2xl border border-gray-200" value={newCategoryColor} onChange={e => setNewCategoryColor(e.target.value)} />
-                      </div>
-                      <button type="button" onClick={handleAddCategory} className="w-full md:w-auto md:px-8 min-h-[48px] bg-gray-900 text-white py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all active:scale-95">
-                        Salvar Categoria
-                      </button>
-                    </div>
-                  </div>
-                )}
                 <button type="submit" className="w-full md:w-auto md:px-10 min-h-[48px] bg-blue-600 text-white py-4 md:py-5 rounded-[2rem] font-black text-lg shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 uppercase tracking-widest">Adicionar Agora</button>
               </form>
             </div>
@@ -2124,6 +2147,19 @@ export default function App() {
         onClose={handleCancelEditItem}
         onSave={handleSaveEditItem}
         onDelete={(id) => handleRemoveItem(id)}
+      />
+
+      <CategoryPanel
+        open={showNewCategoryForm}
+        loading={loading}
+        name={newCategoryName}
+        icon={newCategoryIcon}
+        color={newCategoryColor}
+        onClose={() => setShowNewCategoryForm(false)}
+        onSave={handleAddCategory}
+        onNameChange={setNewCategoryName}
+        onIconChange={setNewCategoryIcon}
+        onColorChange={setNewCategoryColor}
       />
 
       <footer className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t px-4 py-4 sm:hidden flex justify-around items-center z-50 rounded-t-[2.25rem] shadow-2xl">
