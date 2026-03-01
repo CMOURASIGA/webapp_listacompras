@@ -6,6 +6,17 @@ const listGuide: HelpGuide = {
   label: 'Montando sua lista',
   title: 'Guia 2 — Montando sua lista',
   description: 'Mock da tela Lista com os pontos principais para cadastro rápido.',
+  subsections: [
+    {
+      title: 'Bloco Sugestões Inteligentes',
+      description: 'Ajuda a montar a lista mais rápido com sugestões prontas.',
+      bullets: [
+        'Frequentes: itens recorrentes do seu uso.',
+        'Última compra: reaproveita itens da compra anterior.',
+        'IA: gera novas sugestões com base no contexto da sua lista.'
+      ]
+    }
+  ],
   steps: [
     {
       title: 'Quick add',
@@ -30,11 +41,19 @@ const listGuide: HelpGuide = {
       highlights: ['Categoria'],
       systemTarget: 'lista',
       deepLink: '/lista'
+    },
+    {
+      title: 'Sugestões Inteligentes',
+      description: 'Use o bloco de sugestões para adicionar itens com 1 clique e acelerar a montagem da lista.',
+      image: 'Mock: painel de sugestões inteligentes',
+      highlights: ['Pedir IA'],
+      systemTarget: 'lista',
+      deepLink: '/lista'
     }
   ],
   overviewMock: {
     caption: 'Elementos críticos da tela Lista',
-    highlights: ['quick-add', 'Quantidade', 'Categoria']
+    highlights: ['quick-add', 'Quantidade', 'Categoria', 'Pedir IA']
   }
 };
 

@@ -17,13 +17,13 @@ export default function HelpSidebar({
       <p className="px-3 pt-2 pb-3 text-[10px] font-black uppercase tracking-widest text-gray-400">
         Navegação
       </p>
-      <div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-1 md:pb-0">
+      <div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-1 md:pb-0 no-scrollbar">
         {guides.map((guide) => (
           <button
             key={guide.id}
             type="button"
             onClick={() => onSelect(guide.id)}
-            className={`min-w-[180px] sm:min-w-[220px] md:min-w-0 w-full text-left px-3 py-3 rounded-2xl border transition-all duration-200 ${
+            className={`min-w-[150px] sm:min-w-[220px] md:min-w-0 w-full text-left px-3 py-3 rounded-2xl border transition-all duration-200 ${
               guide.id === activeGuideId
                 ? 'bg-blue-50 border-blue-200 text-blue-800'
                 : 'bg-white border-transparent text-gray-600 hover:bg-gray-50'

@@ -95,34 +95,38 @@ export default function HelpLayout({ onBack, onOpenDeepLink }: HelpLayoutProps) 
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 animate-fade-in">
+    <div className="min-h-screen bg-slate-50 animate-fade-in overflow-x-hidden">
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-gray-200">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-3 sm:px-6 py-3 sm:py-4 flex flex-col gap-2">
+          <div className="w-full flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={onBack}
-              className="px-3 py-2 rounded-xl border border-gray-200 text-gray-700 text-xs font-black uppercase tracking-widest hover:bg-gray-100 transition-all active:scale-95"
+              className="px-3 py-2 rounded-xl border border-gray-200 text-gray-700 text-[11px] font-black uppercase tracking-widest hover:bg-gray-100 transition-all active:scale-95 shrink-0"
             >
               Voltar
             </button>
-            <h1 className="text-lg sm:text-xl font-black text-gray-900 tracking-tight">Central de Ajuda</h1>
+              <h1 className="text-base sm:text-xl font-black text-gray-900 tracking-tight truncate">Central de Ajuda</h1>
+            </div>
+            <span className="hidden sm:inline text-[10px] font-black uppercase tracking-widest text-blue-600 shrink-0">/help</span>
           </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-600">
+
+          <div className="w-full flex items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-600 min-w-0">
               <input
                 type="checkbox"
                 checked={closeOnNavigate}
                 onChange={(e) => setCloseOnNavigate(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-200"
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-200 shrink-0"
               />
-              Fechar ajuda ao navegar
+              <span className="truncate">Fechar ajuda ao navegar</span>
             </label>
-            <span className="text-[10px] font-black uppercase tracking-widest text-blue-600">/help</span>
+            <span className="sm:hidden text-[10px] font-black uppercase tracking-widest text-blue-600 shrink-0">/help</span>
           </div>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-6">
+      <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
         <div className="mb-4">
           <input
             type="text"
@@ -133,12 +137,31 @@ export default function HelpLayout({ onBack, onOpenDeepLink }: HelpLayoutProps) 
           />
         </div>
 
+        <div className="md:hidden mb-4">
+          <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2 block">
+            Guia ativo
+          </label>
+          <select
+            value={activeGuideId}
+            onChange={(e) => setActiveGuideId(e.target.value)}
+            className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-3 text-sm font-semibold text-gray-900 outline-none focus:ring-4 focus:ring-blue-100"
+          >
+            {filteredGuides.map((guide) => (
+              <option key={guide.id} value={guide.id}>
+                {guide.icon} {guide.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="grid md:grid-cols-[280px_1fr] gap-5">
-          <HelpSidebar
-            guides={filteredGuides}
-            activeGuideId={activeGuideId}
-            onSelect={setActiveGuideId}
-          />
+          <div className="hidden md:block">
+            <HelpSidebar
+              guides={filteredGuides}
+              activeGuideId={activeGuideId}
+              onSelect={setActiveGuideId}
+            />
+          </div>
           {activeGuide ? (
             <HelpContent guide={activeGuide} onOpenDeepLink={handleOpenDeepLink} />
           ) : (

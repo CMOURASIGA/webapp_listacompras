@@ -54,7 +54,7 @@ export default function HelpContent({ guide, onOpenDeepLink }: HelpContentProps)
   const steps = activeTabGuide ? activeTabGuide.steps : (guide.steps || []);
 
   return (
-    <main className="bg-white border border-gray-200 rounded-3xl p-5 sm:p-8 transition-all duration-300">
+    <main className="bg-white border border-gray-200 rounded-3xl p-4 sm:p-8 transition-all duration-300 min-w-0">
       <h2 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">{guide.title}</h2>
       <p className="mt-2 text-sm text-gray-600 font-medium">{guide.description}</p>
 
@@ -77,14 +77,14 @@ export default function HelpContent({ guide, onOpenDeepLink }: HelpContentProps)
       )}
 
       {guide.tabGuides && guide.tabGuides.length > 0 && (
-        <div className="mt-6 border border-dashed border-emerald-300 rounded-3xl bg-gradient-to-br from-emerald-50 to-cyan-50 p-5">
-          <div className="flex flex-wrap gap-2 mb-4">
+        <div className="mt-6 border border-dashed border-emerald-300 rounded-3xl bg-gradient-to-br from-emerald-50 to-cyan-50 p-3 sm:p-5">
+          <div className="flex gap-2 mb-4 overflow-x-auto no-scrollbar">
             {guide.tabGuides.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTabId(tab.id)}
-                className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap shrink-0 ${
                   activeTabGuide?.id === tab.id
                     ? 'bg-emerald-600 text-white border-emerald-600'
                     : 'bg-white text-gray-600 border-gray-200 hover:border-emerald-200 hover:text-emerald-700'
@@ -123,7 +123,7 @@ export default function HelpContent({ guide, onOpenDeepLink }: HelpContentProps)
               href={activeTabGuide.cta.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-4 inline-flex items-center justify-center bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-emerald-700 transition-all active:scale-95"
+              className="mt-4 w-full sm:w-auto inline-flex items-center justify-center bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-emerald-700 transition-all active:scale-95"
             >
               {activeTabGuide.cta.label}
             </a>
@@ -157,11 +157,11 @@ export default function HelpContent({ guide, onOpenDeepLink }: HelpContentProps)
       )}
 
       {guide.overviewMock && (
-        <div className="mt-6 border border-dashed border-blue-300 rounded-3xl bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
+        <div className="mt-6 border border-dashed border-blue-300 rounded-3xl bg-gradient-to-br from-blue-50 to-indigo-50 p-4 sm:p-6">
           <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-2">
             Imagem mockada
           </p>
-          <div className="relative h-44 rounded-2xl bg-white border border-blue-200 shadow-inner">
+          <div className="relative h-36 sm:h-44 rounded-2xl bg-white border border-blue-200 shadow-inner">
             <div className="absolute inset-x-3 top-3 h-3 rounded bg-gray-200" />
             <div className="absolute inset-x-3 top-8 h-3 rounded bg-gray-200" />
             <div className="absolute inset-x-3 top-13 h-3 rounded bg-gray-200" />

@@ -66,15 +66,15 @@ export default function GuideStep({
   };
 
   return (
-    <article className="border border-gray-200 rounded-2xl p-4 bg-gray-50 flex flex-col gap-3">
+    <article className="border border-gray-200 rounded-2xl p-3 sm:p-4 bg-gray-50 flex flex-col gap-3 min-w-0">
       <header>
         <p className="text-[10px] font-black uppercase tracking-widest text-blue-500 mb-1">
           Passo {currentStep} de {totalSteps}
         </p>
-        <h3 className="text-base font-black text-gray-800">{title}</h3>
+        <h3 className="text-sm sm:text-base font-black text-gray-800 break-words">{title}</h3>
       </header>
 
-      <div className="relative h-44 sm:h-52 rounded-xl border border-gray-300 bg-white overflow-hidden">
+      <div className="relative h-40 sm:h-52 rounded-xl border border-gray-300 bg-white overflow-hidden">
         {isImageUrl && !shouldShowFallback && (
           <img
             src={image}
@@ -120,7 +120,7 @@ export default function GuideStep({
       </div>
 
       <footer className="space-y-2">
-        <p className="text-sm font-semibold text-gray-600">{description}</p>
+        <p className="text-sm font-semibold text-gray-600 break-words">{description}</p>
 
         {highlights.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -136,7 +136,7 @@ export default function GuideStep({
           <button
             type="button"
             onClick={() => onOpenDeepLink(deepLink)}
-            className="inline-flex items-center justify-center bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95"
+            className="w-full sm:w-auto inline-flex items-center justify-center bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95"
           >
             Ver no sistema
           </button>
