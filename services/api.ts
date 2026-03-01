@@ -114,11 +114,7 @@ async function callBackend(action: string, data: any = null) {
   const manualUrl = localStorage.getItem('DEBUG_APPS_SCRIPT_URL')?.trim();
   const manualKey = localStorage.getItem('DEBUG_API_KEY')?.trim();
 
-  // Em dev local usamos /api (proxy do Vite -> Apps Script) para evitar CORS no redirect 302.
-  const isDev = (import.meta as any).env?.DEV === true;
-  const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
   const forceDirect = String((import.meta as any).env?.VITE_FORCE_DIRECT_SCRIPT || '').toLowerCase() === 'true';
-  const useDirectScript = forceDirect || !(isDev && isLocalhost);
   const scriptBase = manualUrl || (import.meta as any).env?.VITE_APPS_SCRIPT_URL || FALLBACK_SCRIPT_URL;
   const proxyBase = new URL('/api', window.location.origin).toString();
 
@@ -129,25 +125,29 @@ async function callBackend(action: string, data: any = null) {
   const directUrl = buildRequestUrl(scriptBase, action, data, user);
 
   try {
-    if (useDirectScript) {
-      // Para Apps Script com acesso anônimo (ACAO=*), não usar credentials 'include'.
-      // No endpoint direto (/exec), seguimos redirect até o /macros/echo para obter JSON.
-      return await requestJson(directUrl.toString(), 'omit', 'follow');
+    if (!forceDirect) {
+      // Preferimos /api em qualquer ambiente para manter mesma-origem e evitar
+      // diferenças entre navegadores desktop/mobile no redirect cross-origin.
+      try {
+        const proxyData = await requestJson(proxyUrl.toString(), 'same-origin', 'follow');
+        if (
+          action !== 'getSmartSuggestions' &&
+          proxyData &&
+          typeof proxyData === 'object' &&
+          Object.prototype.hasOwnProperty.call(proxyData, 'sucesso') &&
+          (proxyData as any).sucesso === false
+        ) {
+          throw new Error((proxyData as any).error || `Falha no proxy para ${action}.`);
+        }
+        return proxyData;
+      } catch (proxyError) {
+        // Fallback: caso /api esteja indisponível no host, tenta o /exec direto.
+      }
     }
 
-    // Em dev/local priorizamos exclusivamente o proxy para evitar instabilidade
-    // de redirect cross-origin em alguns navegadores (especialmente mobile Safari).
-    const proxyData = await requestJson(proxyUrl.toString(), 'same-origin', 'follow');
-    if (
-      action !== 'getSmartSuggestions' &&
-      proxyData &&
-      typeof proxyData === 'object' &&
-      Object.prototype.hasOwnProperty.call(proxyData, 'sucesso') &&
-      (proxyData as any).sucesso === false
-    ) {
-      throw new Error((proxyData as any).error || `Falha no proxy para ${action}.`);
-    }
-    return proxyData;
+    // Para Apps Script com acesso anônimo (ACAO=*), não usar credentials 'include'.
+    // No endpoint direto (/exec), seguimos redirect até o /macros/echo para obter JSON.
+    return await requestJson(directUrl.toString(), 'omit', 'follow');
   } catch (error: any) {
     console.error(`Erro na ação ${action}:`, error);
     throw error;
