@@ -1,3236 +1,408 @@
-import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
-import { ShoppingItem, Category, PurchaseGroup, DashboardStats, UserSession, AIProvider, AppSettings } from './types';
-import { api, type ResumoData } from './services/api';
-import { generateSuggestions as generateAISuggestions } from './services/ai/aiService';
-import { useAppSettings } from './store/appSettingsStore';
-import HelpLayout from './help/HelpLayout';
-import EditItemPanel, { Item as EditPanelItem } from './components/EditItemPanel';
-import CategoryPanel from './components/CategoryPanel';
-import SwipeablePendingItemCard from './components/SwipeablePendingItemCard';
-import ResumoPage from './components/resumo/ResumoPage';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  LocalShoppingItem,
+  LocalShoppingList,
+  ShoppingLocalState,
+  createLocalId,
+  loadLocalShoppingState,
+  resetLocalShoppingState,
+  saveLocalShoppingState
+} from './services/localShoppingStore';
 
-// --- Sub-components ---
-type TabKey = 'lista' | 'carrinho' | 'historico' | 'resumo';
-type SuggestionsTab = 'frequentes' | 'ultima_compra' | 'ia';
-type HistoryQuickFilter = 'todos' | '7d' | '30d' | 'maior' | 'menor';
-type ListQuickFilter = 'todos' | 'favoritos';
-type ResumoFetchStatus = 'idle' | 'loading' | 'success' | 'error';
-const QUICK_ADD_HISTORY_KEY = 'shopping_quick_add_history';
-const ONBOARDING_FLAG_KEY = 'hasSeenOnboarding';
-const FAVORITES_STORAGE_PREFIX = 'shopping_favorites_v1';
-const MARKET_MODE_SESSION_KEY = 'shopping_market_mode_enabled';
-const RESUMO_CACHE_PREFIX = 'shopping_resumo_cache_v1';
-const RESUMO_CACHE_TTL_MS = 5 * 60 * 1000;
-const FEATURE_AI_INSIGHTS_ENABLED = String((import.meta as any).env?.VITE_FEATURE_AI_INSIGHTS || '').toLowerCase() === 'true';
-const AUTO_CLEAR_RUNTIME_CACHE_ON_START =
-  String((import.meta as any).env?.VITE_AUTO_CLEAR_RUNTIME_CACHE || 'true').toLowerCase() !== 'false';
-const BASE_ITEM_DICTIONARY = [
-  'arroz 5kg',
-  'feijao carioca',
-  'leite integral',
-  'cafe',
-  'acucar',
-  'sal',
-  'oleo',
-  'azeite',
-  'macarrao',
-  'molho de tomate',
-  'pao de forma',
-  'detergente',
-  'sabao em po',
-  'amaciante',
-  'papel higienico',
-  'creme dental',
-  'frango',
-  'carne moida',
-  'queijo',
-  'presunto',
-  'manteiga',
-  'banana',
-  'maca',
-  'ovo'
+type View = 'listas' | 'lista' | 'mercado' | 'historico' | 'insights';
+
+const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+const categories = ['Mercearia', 'Laticínios', 'Açougue', 'Hortifruti', 'Padaria', 'Bebidas', 'Limpeza', 'Higiene', 'Outros'];
+
+const categoryRules: Array<{ words: string[]; category: string }> = [
+  { words: ['arroz', 'feijao', 'cafe', 'acucar', 'sal', 'oleo', 'azeite', 'macarrao', 'farinha'], category: 'Mercearia' },
+  { words: ['leite', 'queijo', 'iogurte', 'manteiga', 'requeijao'], category: 'Laticínios' },
+  { words: ['carne', 'frango', 'peixe', 'linguica'], category: 'Açougue' },
+  { words: ['banana', 'maca', 'laranja', 'tomate', 'alface', 'batata', 'cebola'], category: 'Hortifruti' },
+  { words: ['pao', 'bolo', 'torrada'], category: 'Padaria' },
+  { words: ['agua', 'suco', 'refrigerante', 'cerveja'], category: 'Bebidas' },
+  { words: ['detergente', 'sabao', 'amaciante', 'desinfetante', 'multiuso'], category: 'Limpeza' },
+  { words: ['papel higienico', 'sabonete', 'shampoo', 'creme dental', 'absorvente'], category: 'Higiene' }
 ];
 
-const CATEGORY_RULES = [
-  { keywords: ['arroz', 'feijao', 'acucar', 'sal', 'oleo', 'azeite', 'farinha', 'macarrao', 'cafe', 'molho'], hints: ['mercearia', 'despensa', 'secos', 'graos', 'alimentos'] },
-  { keywords: ['detergente', 'sabao', 'amaciante', 'desinfetante', 'agua sanitaria', 'multiuso'], hints: ['limpeza', 'higiene', 'casa', 'utilidades'] },
-  { keywords: ['leite', 'queijo', 'iogurte', 'manteiga', 'requeijao'], hints: ['laticinio', 'laticinios', 'frios', 'geladeira', 'refrigerados'] },
-  { keywords: ['carne', 'frango', 'peixe', 'linguica'], hints: ['acougue', 'proteinas', 'carnes', 'aves'] },
-  { keywords: ['banana', 'maca', 'laranja', 'uva', 'alface', 'tomate', 'cebola', 'batata'], hints: ['hortifruti', 'frutas', 'verduras', 'legumes', 'feira'] },
-  { keywords: ['papel higienico', 'absorvente', 'creme dental', 'shampoo', 'sabonete'], hints: ['higiene', 'pessoal', 'banheiro'] },
-  { keywords: ['refrigerante', 'suco', 'agua', 'cerveja'], hints: ['bebidas', 'liquidos'] }
-];
-
-type ConfirmDialogConfig = {
-  title: string;
-  message: string;
-  details?: string[];
-  confirmLabel?: string;
-  cancelLabel?: string;
-  intent?: 'danger' | 'primary';
-};
-
-type DuplicateDecision = 'sum' | 'separate' | 'cancel';
-
-type DuplicateDialogConfig = {
-  itemName: string;
-  existingQuantity: number;
-  incomingQuantity: number;
-};
-
-type AINoticeConfig = {
-  title: string;
-  message: string;
-  action?: 'open_settings';
-  actionLabel?: string;
-};
-
-type OnboardingStep = {
-  title: string;
-  description: string;
-};
-
-const normalizeText = (value: string) =>
-  (value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-
-const formatResumoPeriodKey = (mes: number, ano: number) =>
-  `${ano}-${String(mes).padStart(2, '0')}`;
-
-const getResumoPeriod = (date = new Date()) => ({
-  mes: date.getMonth() + 1,
-  ano: date.getFullYear()
-});
-
-const getResumoMonthInputValue = (date = new Date()) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-
-const parseResumoMonthInputValue = (value: string) => {
-  const match = String(value || '').match(/^(\d{4})-(\d{2})$/);
-  if (!match) {
-    return getResumoPeriod();
-  }
-  const ano = Number(match[1]);
-  const mes = Number(match[2]);
-  if (!Number.isFinite(ano) || !Number.isFinite(mes) || mes < 1 || mes > 12) {
-    return getResumoPeriod();
-  }
-  return { mes, ano };
-};
-
-const buildResumoCacheKey = (userEmail: string, mes: number, ano: number) =>
-  `${RESUMO_CACHE_PREFIX}:${normalizeText(userEmail)}:${ano}-${String(mes).padStart(2, '0')}`;
-
-const readResumoCache = (userEmail: string, mes: number, ano: number) => {
-  if (typeof window === 'undefined') return null;
-  const key = buildResumoCacheKey(userEmail, mes, ano);
-  try {
-    const raw = sessionStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') {
-      sessionStorage.removeItem(key);
-      return null;
-    }
-    const timestamp = Number(parsed.timestamp);
-    if (!Number.isFinite(timestamp) || Date.now() - timestamp > RESUMO_CACHE_TTL_MS) {
-      sessionStorage.removeItem(key);
-      return null;
-    }
-    const data = parsed.data as ResumoData;
-    if (!data || typeof data !== 'object') {
-      sessionStorage.removeItem(key);
-      return null;
-    }
-    return { data, timestamp };
-  } catch {
-    sessionStorage.removeItem(key);
-    return null;
-  }
-};
-
-const writeResumoCache = (userEmail: string, mes: number, ano: number, data: ResumoData, timestamp: number) => {
-  if (typeof window === 'undefined') return;
-  const key = buildResumoCacheKey(userEmail, mes, ano);
-  try {
-    sessionStorage.setItem(
-      key,
-      JSON.stringify({
-        timestamp,
-        data
-      })
-    );
-  } catch {
-    // Ignora falha de armazenamento sem quebrar o fluxo.
-  }
-};
-
-const clearResumoCacheForUser = (userEmail: string) => {
-  if (typeof window === 'undefined') return;
-  const normalizedEmail = normalizeText(userEmail);
-  const prefix = `${RESUMO_CACHE_PREFIX}:${normalizedEmail}:`;
-  try {
-    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
-      const key = sessionStorage.key(i);
-      if (key && key.startsWith(prefix)) {
-        sessionStorage.removeItem(key);
-      }
-    }
-  } catch {
-    // Ignora falha de limpeza sem quebrar o fluxo.
-  }
-};
-
-const clearRuntimeCachesOnStartup = () => {
-  if (typeof window === 'undefined') return;
-  if (!AUTO_CLEAR_RUNTIME_CACHE_ON_START) return;
-
-  try {
-    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
-      const key = sessionStorage.key(i);
-      if (!key) continue;
-      if (key.startsWith(`${RESUMO_CACHE_PREFIX}:`)) {
-        sessionStorage.removeItem(key);
-      }
-    }
-  } catch {
-    // Ignora erro de sessão sem interromper o app.
-  }
-
-  // Limpa apenas overrides técnicos para evitar usar URL/chave antiga em mobile.
-  const debugOverrideKeys = [
-    'DEBUG_APPS_SCRIPT_URL',
-    'DEBUG_API_KEY',
-    'DEBUG_OPENAI_API_KEY',
-    'DEBUG_AI_PROVIDER',
-    'DEBUG_CLIENT_ID'
-  ];
-  debugOverrideKeys.forEach((key) => {
-    try {
-      localStorage.removeItem(key);
-    } catch {
-      // Ignora erro de storage.
-    }
-  });
-};
-
-const parseQuickItemInput = (rawValue: string, fallbackQty: number) => {
-  const raw = (rawValue || '').trim();
-  if (!raw) return { nome: '', quantidade: Math.max(1, Number(fallbackQty) || 1) };
-
-  const startsWithQty = raw.match(/^(\d+)\s+(.+)$/);
-  if (startsWithQty) {
-    return {
-      quantidade: Math.max(1, Number(startsWithQty[1]) || 1),
-      nome: startsWithQty[2].trim().replace(/\s{2,}/g, ' ')
-    };
-  }
-
-  return {
-    quantidade: Math.max(1, Number(fallbackQty) || 1),
-    nome: raw.replace(/\s{2,}/g, ' ')
-  };
-};
-
-const parsePurchaseDate = (rawDate: string) => {
-  const normalized = (rawDate || '').trim();
-  if (!normalized) return null;
-
-  const directDate = new Date(normalized);
-  if (!Number.isNaN(directDate.getTime())) return directDate;
-
-  const match = normalized.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
-  );
-  if (!match) return null;
-
-  const day = Number(match[1]);
-  const month = Number(match[2]) - 1;
-  const year = Number(match[3]);
-  const hour = Number(match[4] || '0');
-  const minute = Number(match[5] || '0');
-  const second = Number(match[6] || '0');
-  const parsed = new Date(year, month, day, hour, minute, second);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
-};
-
-const formatCurrencyBR = (value: number) =>
-  Number(value || 0).toLocaleString('pt-BR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
-
-const QuantityStepper = ({
-  value,
-  onChange,
-  min = 1
-}: {
-  value: number;
-  onChange: (next: number) => void;
-  min?: number;
-}) => {
-  const safeValue = Math.max(min, Number(value) || min);
-
-  const decrease = () => onChange(Math.max(min, safeValue - 1));
-  const increase = () => onChange(safeValue + 1);
-
-  return (
-    <div className="flex items-center gap-2">
-      <button type="button" onClick={decrease} className="w-10 h-10 rounded-xl border border-gray-300 bg-white text-gray-700 font-black text-xl leading-none hover:bg-gray-50 active:scale-95">-</button>
-      <input
-        type="number"
-        min={min}
-        value={safeValue}
-        onChange={(e) => onChange(Math.max(min, Number(e.target.value) || min))}
-        className="w-16 h-10 text-center rounded-xl border border-gray-300 bg-white text-sm font-black text-gray-900 outline-none focus:ring-2 focus:ring-blue-100"
-      />
-      <button type="button" onClick={increase} className="w-10 h-10 rounded-xl border border-gray-300 bg-white text-gray-700 font-black text-xl leading-none hover:bg-gray-50 active:scale-95">+</button>
-    </div>
-  );
-};
-
-const QuickAddInput = ({
-  value,
-  quantity,
-  inferredCategoryName,
-  suggestions,
-  loading,
-  inputRef,
-  onChangeValue,
-  onChangeQuantity,
-  onPickSuggestion,
-  onSubmit
-}: {
-  value: string;
-  quantity: number;
-  inferredCategoryName: string;
-  suggestions: string[];
-  loading: boolean;
-  inputRef?: React.RefObject<HTMLInputElement | null>;
-  onChangeValue: (next: string) => void;
-  onChangeQuantity: (next: number) => void;
-  onPickSuggestion: (suggestion: string) => void;
-  onSubmit: () => void;
-}) => {
-  const [isFocused, setIsFocused] = useState(false);
-  const [highlighted, setHighlighted] = useState(0);
-  const trimmed = value.trim();
-  const normalizedTrimmed = normalizeText(trimmed);
-  const hasExactSuggestion = suggestions.some((item) => normalizeText(item) === normalizedTrimmed);
-  const showCreateOption = !!trimmed && !hasExactSuggestion;
-  const visibleOptions = showCreateOption ? [`__create__:${trimmed}`, ...suggestions] : suggestions;
-  const showDropdown = isFocused && (visibleOptions.length > 0);
-
-  useEffect(() => {
-    setHighlighted(0);
-  }, [value, suggestions.length]);
-
-  const pickOption = (option: string) => {
-    if (option.startsWith('__create__:')) {
-      onSubmit();
-      return;
-    }
-    onPickSuggestion(option);
-  };
-
-  const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'ArrowDown' && visibleOptions.length > 0) {
-      e.preventDefault();
-      setHighlighted((prev) => (prev + 1) % visibleOptions.length);
-      return;
-    }
-    if (e.key === 'ArrowUp' && visibleOptions.length > 0) {
-      e.preventDefault();
-      setHighlighted((prev) => (prev - 1 + visibleOptions.length) % visibleOptions.length);
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (showDropdown && visibleOptions[highlighted]) {
-        pickOption(visibleOptions[highlighted]);
-        return;
-      }
-      onSubmit();
-      return;
-    }
-    if (e.key === 'Escape') {
-      setIsFocused(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-        Adição rápida
-      </label>
-
-      <div className="relative">
-        <input
-          ref={inputRef}
-          type="text"
-          value={value}
-          placeholder="Ex: arroz 5kg, 2 leite, detergente"
-          className="w-full px-6 py-4 bg-gray-50 rounded-2xl border border-gray-200 font-black text-gray-900 text-base outline-none focus:ring-4 focus:ring-blue-100"
-          onChange={(e) => onChangeValue(e.target.value)}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setTimeout(() => setIsFocused(false), 120)}
-          onKeyDown={onInputKeyDown}
-        />
-
-        {showDropdown && (
-          <div className="absolute z-30 mt-2 w-full bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden">
-            {visibleOptions.map((option, idx) => {
-              const isCreate = option.startsWith('__create__:');
-              const label = isCreate ? option.replace('__create__:', '') : option;
-              const isActive = idx === highlighted;
-              return (
-                <button
-                  key={`${option}-${idx}`}
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    pickOption(option);
-                  }}
-                  className={`w-full text-left px-4 py-3 text-sm font-semibold transition-colors ${
-                    isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  {isCreate ? `Criar novo item: "${label}"` : label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Quantidade</span>
-          <QuantityStepper value={quantity} onChange={onChangeQuantity} />
-        </div>
-        <div className="text-[11px] font-black text-blue-700 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
-          Categoria auto: {inferredCategoryName || 'A definir'}
-        </div>
-      </div>
-
-      <button
-        type="button"
-        disabled={loading}
-        onClick={onSubmit}
-        className="w-full sm:w-auto bg-blue-600 text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-70"
-      >
-        {loading ? 'Adicionando...' : 'Adicionar Rápido'}
-      </button>
-    </div>
-  );
-};
-
-const EmptyStateCard = ({
-  title,
-  message,
-  ctaLabel,
-  onCta,
-  icon = '✨',
-  mode = 'default'
-}: {
-  title: string;
-  message: string;
-  ctaLabel?: string;
-  onCta?: () => void;
-  icon?: string;
-  mode?: 'default' | 'inverse';
-}) => {
-  const isInverse = mode === 'inverse';
-  const wrapperClass = isInverse
-    ? 'bg-white/10 border border-white/20 text-white'
-    : 'bg-white border border-dashed border-gray-200 text-gray-900 shadow-sm';
-  const titleClass = isInverse ? 'text-white' : 'text-gray-900';
-  const messageClass = isInverse ? 'text-white/80' : 'text-gray-500';
-  const iconClass = isInverse ? 'bg-white/15 text-white' : 'bg-blue-50 text-blue-700';
-  const ctaClass = isInverse
-    ? 'bg-white text-blue-700 hover:bg-blue-50'
-    : 'bg-blue-600 text-white hover:bg-blue-700';
-
-  return (
-    <div className={`mx-auto w-full max-w-xl rounded-[2.25rem] p-6 sm:p-8 text-center ${wrapperClass}`}>
-      <div className={`mx-auto mb-4 h-12 w-12 rounded-2xl flex items-center justify-center text-lg ${iconClass}`}>
-        {icon}
-      </div>
-      <h3 className={`text-xl font-black tracking-tight ${titleClass}`}>{title}</h3>
-      <p className={`mt-2 text-sm font-semibold ${messageClass}`}>{message}</p>
-      {ctaLabel && onCta && (
-        <button
-          type="button"
-          onClick={onCta}
-          className={`mt-5 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 ${ctaClass}`}
-        >
-          {ctaLabel}
-        </button>
-      )}
-    </div>
-  );
-};
-
-const SuggestionsPanel = ({
-  activeTab,
-  onChangeTab,
-  frequentSuggestions,
-  latestPurchaseSuggestions,
-  aiSuggestions,
-  isFavoriteName,
-  onToggleFavorite,
-  loadingAI,
-  onAskAI,
-  onAddSuggestion,
-  onLoadLastPurchase
-}: {
-  activeTab: SuggestionsTab;
-  onChangeTab: (tab: SuggestionsTab) => void;
-  frequentSuggestions: string[];
-  latestPurchaseSuggestions: string[];
-  aiSuggestions: string[];
-  isFavoriteName: (name: string) => boolean;
-  onToggleFavorite: (name: string) => void;
-  loadingAI: boolean;
-  onAskAI: () => void;
-  onAddSuggestion: (name: string) => void;
-  onLoadLastPurchase: () => void;
-}) => {
-  const currentList =
-    activeTab === 'frequentes'
-      ? frequentSuggestions
-      : activeTab === 'ultima_compra'
-        ? latestPurchaseSuggestions
-        : aiSuggestions;
-
-  const tabLabelClass = (tab: SuggestionsTab) =>
-    activeTab === tab ? 'text-blue-700 bg-white border-blue-200' : 'text-gray-500 bg-gray-50 border-transparent hover:text-gray-700';
-
-  const emptySuggestionState = (() => {
-    if (activeTab === 'frequentes') {
-      return {
-        title: 'Sem sugestões frequentes',
-        message: 'Adicione alguns itens para montar sua base de sugestões.',
-        ctaLabel: 'Ir para IA',
-        onCta: () => onChangeTab('ia')
-      };
-    }
-    if (activeTab === 'ultima_compra') {
-      return {
-        title: 'Última compra indisponível',
-        message: 'Carregue o histórico para usar itens da compra anterior.',
-        ctaLabel: 'Carregar última compra',
-        onCta: onLoadLastPurchase
-      };
-    }
-    return {
-      title: 'Sem sugestões de IA',
-      message: 'Peça sugestões inteligentes com base na sua lista atual.',
-      ctaLabel: loadingAI ? 'Processando...' : 'Pedir IA',
-      onCta: onAskAI
-    };
-  })();
-
-  return (
-    <div className="bg-gradient-to-br from-indigo-500 to-blue-600 p-8 rounded-[3rem] text-white shadow-2xl shadow-blue-100">
-      <div className="flex items-center justify-between mb-5 gap-3">
-        <h3 className="text-xl font-black tracking-tighter">Sugestoes Inteligentes</h3>
-        {activeTab === 'ia' && (
-          <button
-            type="button"
-            onClick={onAskAI}
-            disabled={loadingAI}
-            className="bg-white/20 disabled:opacity-70 disabled:cursor-not-allowed backdrop-blur-md px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-white/30 transition-all active:scale-90 flex items-center gap-2"
-          >
-            {loadingAI && <span className="w-3 h-3 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />}
-            {loadingAI ? 'Processando...' : 'Pedir IA'}
-          </button>
-        )}
-      </div>
-
-      <div className="flex flex-wrap gap-2 mb-5">
-        <button type="button" onClick={() => onChangeTab('frequentes')} className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${tabLabelClass('frequentes')}`}>
-          Frequentes
-        </button>
-        <button type="button" onClick={() => onChangeTab('ultima_compra')} className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${tabLabelClass('ultima_compra')}`}>
-          Ultima compra
-        </button>
-        <button type="button" onClick={() => onChangeTab('ia')} className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${tabLabelClass('ia')}`}>
-          IA
-        </button>
-      </div>
-
-      {currentList.length === 0 ? (
-        <EmptyStateCard
-          mode="inverse"
-          icon={activeTab === 'ia' ? '🤖' : activeTab === 'ultima_compra' ? '📦' : '💡'}
-          title={emptySuggestionState.title}
-          message={emptySuggestionState.message}
-          ctaLabel={emptySuggestionState.ctaLabel}
-          onCta={emptySuggestionState.onCta}
-        />
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          {currentList.map((name, index) => (
-            <div
-              key={`${name}-${index}`}
-              className="inline-flex items-center gap-1 bg-white/10 border border-white/15 rounded-2xl p-1 shadow-sm"
-            >
-              <button
-                type="button"
-                onClick={() => onAddSuggestion(name)}
-                className="hover:bg-white text-white hover:text-blue-700 px-4 py-2 rounded-xl text-xs font-black transition-all"
-              >
-                + {name}
-              </button>
-              <button
-                type="button"
-                onClick={() => onToggleFavorite(name)}
-                className={`w-8 h-8 rounded-xl text-sm transition-all active:scale-90 ${
-                  isFavoriteName(name)
-                    ? 'bg-amber-300 text-amber-900'
-                    : 'bg-white/15 text-white hover:bg-white/25'
-                }`}
-                aria-label={isFavoriteName(name) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-                title={isFavoriteName(name) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-              >
-                ⭐
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const TooltipDot = ({ text }: { text: string }) => (
-  <span
-    className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-100 text-blue-700 text-[10px] font-black cursor-help"
-    title={text}
-    aria-label={text}
-  >
-    ℹ️
-  </span>
-);
-
-const LoadingOverlay = ({ message = "Sincronizando..." }) => (
-  <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[9999] flex items-center justify-center">
-    <div className="flex flex-col items-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      <p className="mt-4 text-gray-900 font-bold uppercase text-[10px] tracking-widest">{message}</p>
-    </div>
-  </div>
-);
-
-const ProcessingModal = ({ isOpen, message }: { isOpen: boolean; message: string }) => {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[10006] flex items-center justify-center p-4">
-      <div className="w-full max-w-sm rounded-[2rem] border border-gray-200 bg-white p-7 text-center shadow-2xl">
-        <div className="mx-auto h-12 w-12 rounded-2xl border border-blue-100 bg-blue-50 flex items-center justify-center">
-          <span className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-        </div>
-        <p className="mt-4 text-base font-black tracking-tight text-gray-900">Processando</p>
-        <p className="mt-1 text-sm font-semibold text-gray-500">{message}</p>
-      </div>
-    </div>
-  );
-};
-
-const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 4000);
-    return () => clearTimeout(timer);
-  }, [onClose]);
-
-  const bg = type === 'success' ? 'bg-green-600' : type === 'error' ? 'bg-red-600' : 'bg-blue-600';
-
-  return (
-    <div className={`fixed bottom-20 sm:bottom-10 left-1/2 -translate-x-1/2 ${bg} text-white px-4 py-3 rounded-2xl shadow-2xl z-[10000] flex items-center gap-2 animate-bounce text-sm font-medium text-center w-[calc(100%-1rem)] max-w-md`}>
-      <span>{message}</span>
-    </div>
-  );
-};
-
-const ConfirmationModal = ({
-  isOpen,
-  config,
-  onConfirm,
-  onCancel
-}: {
-  isOpen: boolean;
-  config: ConfirmDialogConfig | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) => {
-  if (!isOpen || !config) return null;
-
-  const isDanger = config.intent === 'danger';
-  const confirmBtnClass = isDanger
-    ? 'bg-red-600 hover:bg-red-700 text-white'
-    : 'bg-blue-600 hover:bg-blue-700 text-white';
-
-  return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[10002] flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-white w-full max-w-xl rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center" onClick={(e) => e.stopPropagation()}>
-        <div className="w-14 h-14 rounded-2xl border border-gray-200 mx-auto mb-5 flex items-center justify-center text-gray-500">
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
-        </div>
-        <h3 className="text-2xl font-black text-gray-900 tracking-tight mb-3">{config.title}</h3>
-        <p className="text-sm font-medium text-gray-600 leading-relaxed">{config.message}</p>
-        {config.details && config.details.length > 0 && (
-          <div className="mt-5 p-4 rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 text-sm font-semibold space-y-1">
-            {config.details.map((line, idx) => (
-              <p key={idx}>{line}</p>
-            ))}
-          </div>
-        )}
-        <div className="mt-7 flex flex-col sm:flex-row gap-3 sm:justify-center">
-          <button onClick={onCancel} className="px-6 py-3 rounded-2xl border border-gray-300 bg-white text-gray-700 font-black text-sm uppercase tracking-wider hover:bg-gray-100 transition-all active:scale-95">
-            {config.cancelLabel || 'Cancelar'}
-          </button>
-          <button onClick={onConfirm} className={`px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider transition-all active:scale-95 ${confirmBtnClass}`}>
-            {config.confirmLabel || 'Confirmar'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const DuplicateItemModal = ({
-  isOpen,
-  config,
-  onSelect
-}: {
-  isOpen: boolean;
-  config: DuplicateDialogConfig | null;
-  onSelect: (decision: DuplicateDecision) => void;
-}) => {
-  if (!isOpen || !config) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[10003] flex items-center justify-center p-4" onClick={() => onSelect('cancel')}>
-      <div className="bg-white w-full max-w-xl rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-2xl font-black text-gray-900 tracking-tight mb-3">Item duplicado</h3>
-        <p className="text-sm font-medium text-gray-600 leading-relaxed">
-          Este item já está na lista. Deseja somar a quantidade?
-        </p>
-        <div className="mt-5 p-4 rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 text-sm font-semibold space-y-1">
-          <p>Item: {config.itemName}</p>
-          <p>Atual: {config.existingQuantity} • Novo: {config.incomingQuantity}</p>
-        </div>
-        <div className="mt-7 flex flex-col gap-3">
-          <button
-            type="button"
-            onClick={() => onSelect('sum')}
-            className="w-full px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider transition-all active:scale-95 bg-blue-600 hover:bg-blue-700 text-white"
-          >
-            Somar quantidade
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelect('separate')}
-            className="w-full px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider transition-all active:scale-95 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100"
-          >
-            Manter separado
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelect('cancel')}
-            className="w-full px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider transition-all active:scale-95 bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
-          >
-            Cancelar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const AINoticeModal = ({
-  isOpen,
-  config,
-  onClose,
-  onAction
-}: {
-  isOpen: boolean;
-  config: AINoticeConfig | null;
-  onClose: () => void;
-  onAction: () => void;
-}) => {
-  if (!isOpen || !config) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/45 backdrop-blur-sm z-[10005] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white w-full max-w-lg rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center" onClick={(e) => e.stopPropagation()}>
-        <div className="w-14 h-14 rounded-2xl border border-amber-200 bg-amber-50 mx-auto mb-5 flex items-center justify-center text-amber-600">
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
-        </div>
-        <h3 className="text-2xl font-black text-gray-900 tracking-tight mb-3">{config.title}</h3>
-        <p className="text-sm font-medium text-gray-600 leading-relaxed">{config.message}</p>
-        <div className="mt-7 flex flex-col sm:flex-row gap-3 sm:justify-center">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-6 py-3 rounded-2xl border border-gray-300 bg-white text-gray-700 font-black text-sm uppercase tracking-wider hover:bg-gray-100 transition-all active:scale-95"
-          >
-            Entendi
-          </button>
-          {config.action === 'open_settings' && (
-            <button
-              type="button"
-              onClick={onAction}
-              className="px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm uppercase tracking-wider transition-all active:scale-95"
-            >
-              {config.actionLabel || 'Abrir configurações'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const OnboardingModal = ({
-  isOpen,
-  steps,
-  stepIndex,
-  onNext,
-  onPrev,
-  onSkip
-}: {
-  isOpen: boolean;
-  steps: OnboardingStep[];
-  stepIndex: number;
-  onNext: () => void;
-  onPrev: () => void;
-  onSkip: () => void;
-}) => {
-  if (!isOpen) return null;
-
-  const isLastStep = stepIndex >= steps.length - 1;
-  const current = steps[stepIndex];
-
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10004] flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-lg rounded-[2.5rem] border border-gray-200 shadow-2xl overflow-hidden">
-        <div className="px-7 py-6 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-          <h3 className="text-lg font-black text-gray-900 tracking-tight">Boas-vindas</h3>
-          <button onClick={onSkip} className="text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-gray-700">
-            Pular
-          </button>
-        </div>
-
-        <div className="px-7 py-7">
-          <p className="text-[10px] font-black uppercase tracking-widest text-blue-500 mb-3">
-            Passo {stepIndex + 1} de {steps.length}
-          </p>
-          <h4 className="text-2xl font-black text-gray-900 mb-3">{current.title}</h4>
-          <p className="text-sm font-medium text-gray-600 leading-relaxed">{current.description}</p>
-
-          <div className="mt-6 flex gap-2">
-            {steps.map((_, idx) => (
-              <span
-                key={idx}
-                className={`h-1.5 flex-1 rounded-full ${idx <= stepIndex ? 'bg-blue-600' : 'bg-gray-200'}`}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="px-7 pb-7 flex flex-col sm:flex-row gap-3">
-          <button
-            type="button"
-            onClick={onPrev}
-            disabled={stepIndex === 0}
-            className="sm:w-36 py-3 rounded-2xl border border-gray-300 bg-white text-gray-700 font-black text-xs uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Voltar
-          </button>
-          <button
-            type="button"
-            onClick={onNext}
-            className="flex-1 py-3 rounded-2xl bg-blue-600 text-white font-black text-xs uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95"
-          >
-            {isLastStep ? 'Concluir' : 'Próximo'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const AppHeader = ({
-  user,
-  activeTab,
-  onChangeTab,
-  onOpenHelp,
-  onOpenSettings,
-  onLogout,
-  listaCount,
-  carrinhoCount,
-  isOnline
-}: {
-  user: UserSession | null;
-  activeTab: TabKey;
-  onChangeTab: (tab: TabKey) => void;
-  onOpenHelp: () => void;
-  onOpenSettings: () => void;
-  onLogout: () => void;
-  listaCount: number;
-  carrinhoCount: number;
-  isOnline: boolean;
-}) => {
-  const statusText = isOnline ? 'Sincronizado' : 'Offline';
-  const statusClass = isOnline ? 'text-emerald-600' : 'text-amber-600';
-  const tabsContainerRef = useRef<HTMLElement | null>(null);
-  const [showTabsOverflowHint, setShowTabsOverflowHint] = useState(false);
-  const tabRefs = useRef<Record<TabKey, HTMLButtonElement | null>>({
-    lista: null,
-    carrinho: null,
-    historico: null,
-    resumo: null
-  });
-
-  const updateTabsOverflowHint = useCallback(() => {
-    const tabsEl = tabsContainerRef.current;
-    if (!tabsEl) return;
-
-    const hasOverflow = tabsEl.scrollWidth > tabsEl.clientWidth + 1;
-    const canScrollRight = tabsEl.scrollLeft + tabsEl.clientWidth < tabsEl.scrollWidth - 1;
-    setShowTabsOverflowHint(hasOverflow && canScrollRight);
-  }, []);
-
-  const scrollActiveTabIntoView = useCallback(
-    (behavior: ScrollBehavior = 'smooth') => {
-      if (typeof window === 'undefined') return;
-      if (!window.matchMedia('(max-width: 767px)').matches) return;
-      tabRefs.current[activeTab]?.scrollIntoView({
-        behavior,
-        inline: 'center',
-        block: 'nearest'
-      });
-    },
-    [activeTab]
-  );
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const tabsEl = tabsContainerRef.current;
-    if (!tabsEl) return;
-
-    const handleUpdate = () => updateTabsOverflowHint();
-    handleUpdate();
-
-    tabsEl.addEventListener('scroll', handleUpdate, { passive: true });
-    window.addEventListener('resize', handleUpdate);
-    return () => {
-      tabsEl.removeEventListener('scroll', handleUpdate);
-      window.removeEventListener('resize', handleUpdate);
-    };
-  }, [updateTabsOverflowHint]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const frameId = window.requestAnimationFrame(() => updateTabsOverflowHint());
-    return () => window.cancelAnimationFrame(frameId);
-  }, [activeTab, listaCount, carrinhoCount, updateTabsOverflowHint]);
-
-  useEffect(() => {
-    scrollActiveTabIntoView('smooth');
-    const timeoutId = window.setTimeout(() => updateTabsOverflowHint(), 260);
-    return () => window.clearTimeout(timeoutId);
-  }, [activeTab, scrollActiveTabIntoView, updateTabsOverflowHint]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!window.matchMedia('(max-width: 767px)').matches) return;
-
-    let raf2 = 0;
-    const raf1 = window.requestAnimationFrame(() => {
-      scrollActiveTabIntoView('auto');
-      raf2 = window.requestAnimationFrame(() => scrollActiveTabIntoView('auto'));
+function detectCategory(name: string) {
+  const n = normalize(name);
+  return categoryRules.find((rule) => rule.words.some((word) => n.includes(word)))?.category || 'Outros';
+}
+
+function parseNaturalItems(text: string) {
+  return text
+    .split(/,|\n|;/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const start = part.match(/^(\d+)\s*[xX]?\s+(.+)$/);
+      const end = part.match(/^(.+?)\s+[xX](\d+)$/);
+      const quantity = start ? Number(start[1]) : end ? Number(end[2]) : 1;
+      const name = (start ? start[2] : end ? end[1] : part).trim();
+      return { name, quantity: Math.max(1, quantity), category: detectCategory(name) };
     });
-    const timeoutId = window.setTimeout(() => scrollActiveTabIntoView('auto'), 220);
+}
 
-    return () => {
-      window.cancelAnimationFrame(raf1);
-      if (raf2) window.cancelAnimationFrame(raf2);
-      window.clearTimeout(timeoutId);
+function Icon({ children }: { children: React.ReactNode }) {
+  return <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-lg">{children}</span>;
+}
+
+function App() {
+  const [state, setState] = useState<ShoppingLocalState>(() => loadLocalShoppingState());
+  const [view, setView] = useState<View>('lista');
+  const [quickText, setQuickText] = useState('');
+  const [search, setSearch] = useState('');
+  const [showNewList, setShowNewList] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [editing, setEditing] = useState<LocalShoppingItem | null>(null);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => saveLocalShoppingState(state), [state]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(''), 2600);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const activeList = useMemo(
+    () => state.lists.find((list) => list.id === state.activeListId) || state.lists[0],
+    [state]
+  );
+
+  const activeItems = activeList?.itens || [];
+  const pending = activeItems.filter((item) => item.status === 'pendente');
+  const bought = activeItems.filter((item) => item.status === 'comprado');
+  const estimated = activeItems.reduce((sum, item) => sum + item.precoEstimado * item.quantidade, 0);
+  const actual = bought.reduce((sum, item) => sum + (item.precoReal ?? item.precoEstimado) * item.quantidade, 0);
+  const projected = actual + pending.reduce((sum, item) => sum + item.precoEstimado * item.quantidade, 0);
+  const progress = activeItems.length ? Math.round((bought.length / activeItems.length) * 100) : 0;
+
+  const updateActiveList = (updater: (list: LocalShoppingList) => LocalShoppingList) => {
+    setState((current) => ({
+      ...current,
+      lists: current.lists.map((list) => list.id === current.activeListId ? updater(list) : list)
+    }));
+  };
+
+  const addParsedItems = () => {
+    const parsed = parseNaturalItems(quickText);
+    if (!parsed.length) return;
+    updateActiveList((list) => {
+      const next = [...list.itens];
+      parsed.forEach((entry) => {
+        const existing = next.find((item) => normalize(item.nome) === normalize(entry.name) && item.status === 'pendente');
+        if (existing) {
+          existing.quantidade += entry.quantity;
+        } else {
+          next.push({
+            id: createLocalId('item'),
+            nome: entry.name,
+            quantidade: entry.quantity,
+            categoria: entry.category,
+            precoEstimado: 0,
+            status: 'pendente',
+            favorito: false,
+            criadoEm: new Date().toISOString()
+          });
+        }
+      });
+      return { ...list, itens: next, atualizadaEm: new Date().toISOString() };
+    });
+    setQuickText('');
+    setNotice(`${parsed.length} item(ns) adicionado(s)`);
+  };
+
+  const toggleItem = (itemId: string) => {
+    updateActiveList((list) => ({
+      ...list,
+      atualizadaEm: new Date().toISOString(),
+      itens: list.itens.map((item) => item.id === itemId ? {
+        ...item,
+        status: item.status === 'pendente' ? 'comprado' : 'pendente',
+        compradoEm: item.status === 'pendente' ? new Date().toISOString() : undefined
+      } : item)
+    }));
+  };
+
+  const removeItem = (itemId: string) => {
+    updateActiveList((list) => ({ ...list, itens: list.itens.filter((item) => item.id !== itemId), atualizadaEm: new Date().toISOString() }));
+    setEditing(null);
+  };
+
+  const saveEditing = () => {
+    if (!editing) return;
+    updateActiveList((list) => ({
+      ...list,
+      atualizadaEm: new Date().toISOString(),
+      itens: list.itens.map((item) => item.id === editing.id ? editing : item)
+    }));
+    setEditing(null);
+    setNotice('Item atualizado');
+  };
+
+  const createList = () => {
+    const name = newListName.trim();
+    if (!name) return;
+    const newList: LocalShoppingList = {
+      id: createLocalId('lista'),
+      nome: name,
+      criadaEm: new Date().toISOString(),
+      atualizadaEm: new Date().toISOString(),
+      arquivada: false,
+      itens: []
     };
-  }, [scrollActiveTabIntoView]);
+    setState((current) => ({ ...current, activeListId: newList.id, lists: [newList, ...current.lists] }));
+    setNewListName('');
+    setShowNewList(false);
+    setView('lista');
+  };
 
-  const tabClass = (tab: TabKey) => {
-    if (activeTab !== tab) return 'text-gray-400 hover:text-gray-600';
-    if (tab === 'lista') return 'text-blue-600';
-    if (tab === 'carrinho') return 'text-green-600';
-    if (tab === 'historico') return 'text-purple-600';
-    return 'text-amber-600';
+  const finishPurchase = () => {
+    if (!bought.length) {
+      setNotice('Marque itens como comprados primeiro');
+      return;
+    }
+    const purchase = {
+      id: createLocalId('compra'),
+      listaId: activeList.id,
+      listaNome: activeList.nome,
+      mercado: activeList.mercado,
+      data: new Date().toISOString(),
+      itens: bought.map((item) => {
+        const unit = item.precoReal ?? item.precoEstimado;
+        return { nome: item.nome, quantidade: item.quantidade, categoria: item.categoria, precoUnitario: unit, total: unit * item.quantidade };
+      }),
+      total: actual
+    };
+    setState((current) => ({
+      ...current,
+      marketMode: false,
+      purchases: [purchase, ...current.purchases],
+      lists: current.lists.map((list) => list.id === current.activeListId ? {
+        ...list,
+        atualizadaEm: new Date().toISOString(),
+        itens: list.itens.filter((item) => item.status !== 'comprado')
+      } : list)
+    }));
+    setView('historico');
+    setNotice('Compra finalizada e salva no histórico');
   };
-  const indicatorClass = (tab: TabKey) => {
-    if (tab === 'lista') return 'bg-blue-600';
-    if (tab === 'carrinho') return 'bg-green-600';
-    if (tab === 'historico') return 'bg-purple-600';
-    return 'bg-amber-500';
-  };
+
+  const frequentSuggestions = useMemo(() => {
+    const counts = new Map<string, { name: string; count: number; price: number; category: string }>();
+    state.purchases.forEach((purchase) => purchase.itens.forEach((item) => {
+      const key = normalize(item.nome);
+      const current = counts.get(key) || { name: item.nome, count: 0, price: 0, category: item.categoria };
+      counts.set(key, { ...current, count: current.count + 1, price: item.precoUnitario });
+    }));
+    const existing = new Set(activeItems.map((item) => normalize(item.nome)));
+    return [...counts.values()].filter((item) => !existing.has(normalize(item.name))).sort((a, b) => b.count - a.count).slice(0, 5);
+  }, [state.purchases, activeItems]);
+
+  const priceHistory = useMemo(() => {
+    const map = new Map<string, number[]>();
+    state.purchases.forEach((purchase) => purchase.itens.forEach((item) => {
+      const key = normalize(item.nome);
+      map.set(key, [...(map.get(key) || []), item.precoUnitario]);
+    }));
+    return map;
+  }, [state.purchases]);
+
+  const filteredItems = activeItems.filter((item) => normalize(item.nome).includes(normalize(search)));
+
+  const navigation: Array<{ key: View; label: string; icon: string }> = [
+    { key: 'listas', label: 'Listas', icon: '☷' },
+    { key: 'lista', label: 'Compras', icon: '🛒' },
+    { key: 'mercado', label: 'Mercado', icon: '✓' },
+    { key: 'historico', label: 'Histórico', icon: '◷' },
+    { key: 'insights', label: 'Resumo', icon: '▥' }
+  ];
 
   return (
-    <>
-      <header className="bg-white/90 backdrop-blur-xl border-b border-gray-100 px-3 sm:px-6 py-3 sm:py-4 sticky top-0 z-50 overflow-x-clip">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 sm:gap-4 min-w-0">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-            <div className="w-10 h-10 min-w-[40px] min-h-[40px] shrink-0 rounded-2xl overflow-hidden shadow-xl shadow-blue-100 bg-blue-600">
-              <img
-                src="/icons/icon-192-v2.png"
-                alt="Shopping Pro"
-                className="w-full h-full object-cover"
-                loading="eager"
-                decoding="async"
-              />
-            </div>
-            <div className="min-w-0">
-              <h1 className="font-black text-gray-900 text-base sm:text-xl tracking-tight whitespace-nowrap overflow-hidden text-ellipsis max-w-[120px] sm:max-w-[220px] md:max-w-none">
-                Shopping Pro
-              </h1>
-              <p className="text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                <span className={`hidden sm:inline ${statusClass}`}>{statusText}</span>
-              </p>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-600 text-xl text-white shadow-sm">🛍</div>
+            <div>
+              <h1 className="font-bold leading-tight">Shopping Pro</h1>
+              <p className="text-xs text-slate-500">Nova visão local-first</p>
             </div>
           </div>
-
-          <div className="hidden md:flex items-center gap-1 bg-gray-50 rounded-2xl p-1 border border-gray-100">
-            <button onClick={() => onChangeTab('lista')} className={`px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all ${tabClass('lista')}`}>
-              Lista ({listaCount})
-            </button>
-            <button onClick={() => onChangeTab('carrinho')} className={`px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all ${tabClass('carrinho')}`}>
-              Carrinho ({carrinhoCount})
-            </button>
-            <button onClick={() => onChangeTab('historico')} className={`px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all ${tabClass('historico')}`}>
-              Historico
-            </button>
-            <button onClick={() => onChangeTab('resumo')} className={`px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all ${tabClass('resumo')}`}>
-              Resumo
-            </button>
+          <div className="flex items-center gap-2">
+            <span className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 sm:inline">● dados locais</span>
+            <button onClick={() => { if (confirm('Restaurar os dados de demonstração?')) setState(resetLocalShoppingState()); }} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-50">Restaurar demo</button>
           </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={onOpenHelp}
-              aria-label="Abrir ajuda"
-              className="px-2 sm:px-4 py-2 min-h-[40px] sm:min-h-[44px] rounded-xl border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all whitespace-nowrap inline-flex items-center justify-center gap-1"
-            >
-              <span>❓</span>
-              <span className="hidden sm:inline">Ajuda</span>
-            </button>
-            <button
-              onClick={onOpenSettings}
-              aria-label="Abrir configurações"
-              className="px-2 sm:px-3 py-2 min-h-[40px] sm:min-h-[44px] rounded-xl border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all whitespace-nowrap inline-flex items-center justify-center gap-1"
-            >
-              <span>⚙️</span>
-              <span className="hidden sm:inline">Config</span>
-            </button>
-            <button onClick={onLogout} className="group relative shrink-0" aria-label="Sair">
-              <img
-                src={user?.picture}
-                className="w-10 h-10 min-w-[40px] min-h-[40px] shrink-0 rounded-full object-cover border-2 border-white shadow-md group-hover:ring-4 group-hover:ring-blue-50 transition-all"
-              />
-            </button>
-          </div>
-        </div>
-
-        <div className="relative md:hidden mt-3">
-          <nav ref={tabsContainerRef} className="tabs-container border border-gray-100 rounded-2xl bg-white">
-            {(['lista', 'carrinho', 'historico', 'resumo'] as TabKey[]).map((tab) => {
-              const label =
-                tab === 'lista'
-                  ? `Lista (${listaCount})`
-                  : tab === 'carrinho'
-                    ? `Carrinho (${carrinhoCount})`
-                    : tab === 'historico'
-                      ? 'Historico'
-                      : 'Resumo';
-              const active = activeTab === tab;
-              return (
-                <button
-                  key={tab}
-                  ref={(el) => {
-                    tabRefs.current[tab] = el;
-                  }}
-                  onClick={() => onChangeTab(tab)}
-                  className={`tab py-3 font-black text-[10px] uppercase tracking-widest relative transition-all whitespace-nowrap ${active ? tabClass(tab) : 'text-gray-400'}`}
-                >
-                  {label}
-                  {active && <span className={`absolute bottom-0 left-3 right-3 h-1 rounded-t-full ${indicatorClass(tab)}`} />}
-                </button>
-              );
-            })}
-          </nav>
-          {showTabsOverflowHint && (
-            <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-white via-white/85 to-transparent rounded-r-2xl" />
-          )}
         </div>
       </header>
-    </>
-  );
-};
 
-const DiagnosticModal = ({
-  isOpen,
-  onClose,
-  onRefresh,
-  initialSettings,
-  onSaveSettings
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onRefresh: () => void;
-  initialSettings: AppSettings;
-  onSaveSettings: (next: AppSettings) => void;
-}) => {
-  const [form, setForm] = useState<AppSettings>(initialSettings);
-  const [saveFeedback, setSaveFeedback] = useState('');
-
-  useEffect(() => {
-    if (isOpen) {
-      setForm(initialSettings);
-      setSaveFeedback('');
-    }
-  }, [isOpen, initialSettings]);
-
-  const saveSettings = () => {
-    const next: AppSettings = {
-      scriptUrl: (form.scriptUrl || '').trim(),
-      googleClientId: (form.googleClientId || '').trim(),
-      aiProvider: form.aiProvider || 'disabled',
-      geminiApiKey: (form.geminiApiKey || '').trim(),
-      openaiApiKey: (form.openaiApiKey || '').trim()
-    };
-    onSaveSettings(next);
-    onRefresh();
-    setSaveFeedback('Configurações salvas com sucesso.');
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[10001] flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-fade-in border border-gray-200">
-        <div className="p-6 border-b flex justify-between items-center bg-gray-50">
-          <h2 className="text-xl font-black text-gray-900 uppercase tracking-tighter">Painel de Controle V2</h2>
-          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full text-gray-900 transition-all active:scale-90">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-
-        <div className="p-6 overflow-y-auto space-y-6">
-          <section className="bg-white border border-gray-200 rounded-3xl p-5 space-y-4">
-            <h3 className="text-sm font-black uppercase tracking-widest text-gray-700">IA</h3>
-            <div>
-              <label className="text-[10px] font-black text-gray-400 uppercase block mb-2 flex items-center gap-2">
-                Provider IA
-                <TooltipDot text="Escolha o provedor de sugestões de IA que será usado pelo sistema." />
-              </label>
-              <select
-                className="w-full bg-white border border-gray-300 p-4 rounded-2xl text-xs font-black text-gray-900 shadow-inner outline-none focus:ring-4 focus:ring-blue-100"
-                value={form.aiProvider}
-                onChange={(e) => setForm({ ...form, aiProvider: e.target.value as AIProvider })}
-              >
-                <option value="disabled">Desativado</option>
-                <option value="gemini">Gemini</option>
-                <option value="openai">OpenAI</option>
-              </select>
+      <main className="mx-auto max-w-6xl px-4 pb-28 pt-5">
+        {view !== 'listas' && activeList && (
+          <section className="mb-5 rounded-3xl bg-gradient-to-br from-blue-700 to-blue-500 p-5 text-white shadow-sm">
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+              <div>
+                <p className="text-sm text-blue-100">Lista ativa</p>
+                <h2 className="mt-1 text-2xl font-bold">{activeList.nome}</h2>
+                <p className="mt-1 text-sm text-blue-100">{activeList.mercado || 'Mercado não definido'} · {activeItems.length} itens</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                <div className="rounded-2xl bg-white/12 px-4 py-3"><span className="block text-blue-100">Estimado</span><strong>{money(estimated)}</strong></div>
+                <div className="rounded-2xl bg-white/12 px-4 py-3"><span className="block text-blue-100">Projetado</span><strong>{money(projected)}</strong></div>
+                <div className="col-span-2 rounded-2xl bg-white/12 px-4 py-3 sm:col-span-1"><span className="block text-blue-100">Progresso</span><strong>{progress}%</strong></div>
+              </div>
             </div>
-
-            {form.aiProvider === 'gemini' && (
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase block mb-2 flex items-center gap-2">
-                  Gemini API Key
-                  <TooltipDot text="Chave da API Gemini para geração de sugestões inteligentes." />
-                </label>
-                <input
-                  type="password"
-                  placeholder="AIza..."
-                  className="w-full bg-white border border-gray-300 p-4 rounded-2xl text-xs font-mono text-gray-900 shadow-inner"
-                  value={form.geminiApiKey || ''}
-                  onChange={(e) => setForm({ ...form, geminiApiKey: e.target.value })}
-                />
-              </div>
-            )}
-
-            {form.aiProvider === 'openai' && (
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase block mb-2 flex items-center gap-2">
-                  OpenAI API Key
-                  <TooltipDot text="Chave da API OpenAI para geração de sugestões inteligentes." />
-                </label>
-                <input
-                  type="password"
-                  placeholder="sk-..."
-                  className="w-full bg-white border border-gray-300 p-4 rounded-2xl text-xs font-mono text-gray-900 shadow-inner"
-                  value={form.openaiApiKey || ''}
-                  onChange={(e) => setForm({ ...form, openaiApiKey: e.target.value })}
-                />
-              </div>
-            )}
-
-            {form.aiProvider === 'disabled' && (
-              <p className="text-xs font-semibold text-gray-500 bg-gray-50 border border-gray-200 rounded-2xl p-3">
-                IA desativada. Ative um provider para habilitar sugestões inteligentes.
-              </p>
-            )}
           </section>
+        )}
 
-          <div className="flex flex-col sm:flex-row gap-3">
-            <button onClick={saveSettings} className="flex-1 bg-black text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-2xl hover:bg-gray-800 transition-all active:scale-95">
-              Salvar configurações
-            </button>
-            <button onClick={onClose} className="sm:w-40 bg-gray-100 text-gray-700 py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] border border-gray-200 hover:bg-gray-200 transition-all active:scale-95">
-              Fechar
-            </button>
-          </div>
-          {saveFeedback && (
-            <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-2xl px-4 py-3 font-semibold">
-              {saveFeedback}
+        {view === 'listas' && (
+          <section>
+            <div className="mb-5 flex items-center justify-between">
+              <div><h2 className="text-2xl font-bold">Minhas listas</h2><p className="text-sm text-slate-500">Separe compras mensais, eventos, farmácia ou qualquer outro contexto.</p></div>
+              <button onClick={() => setShowNewList(true)} className="rounded-2xl bg-blue-600 px-4 py-2.5 font-semibold text-white shadow-sm hover:bg-blue-700">+ Nova lista</button>
             </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// --- Telas Principais ---
-
-const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
-  const [hasClientId, setHasClientId] = useState(true);
-
-  useEffect(() => {
-    const manualId = localStorage.getItem('DEBUG_CLIENT_ID');
-    const clientId = manualId || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID;
-    
-    if (!clientId || clientId.includes("CLIENT_ID_AQUI")) {
-      setHasClientId(false);
-      return;
-    }
-
-    try {
-      // @ts-ignore
-      google.accounts.id.initialize({
-        client_id: clientId,
-        callback: (response: any) => {
-          const payload = JSON.parse(atob(response.credential.split('.')[1]));
-          const user: UserSession = {
-            email: payload.email,
-            name: payload.name,
-            picture: payload.picture
-          };
-          localStorage.setItem('shopping_user', JSON.stringify(user));
-          onLogin(user);
-        }
-      });
-      // @ts-ignore
-      google.accounts.id.renderButton(
-        document.getElementById("googleBtn"),
-        { theme: "outline", size: "large", width: 280, text: "signin_with", shape: "pill" }
-      );
-    } catch (e) {
-      setHasClientId(false);
-    }
-  }, [onLogin]);
-
-  const handleDemoLogin = () => {
-    const demoUser = {
-      email: 'convidado@exemplo.com',
-      name: 'Convidado',
-      picture: 'https://ui-avatars.com/api/?name=Convidado&background=0D8ABC&color=fff'
-    };
-    localStorage.setItem('shopping_user', JSON.stringify(demoUser));
-    onLogin(demoUser);
-  };
-
-  return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="bg-white p-8 sm:p-12 rounded-[3rem] sm:rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center border border-white">
-        <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center text-white font-black text-5xl shadow-xl mx-auto mb-8 border-4 border-white">L</div>
-        <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tighter">Shopping Pro</h1>
-        <p className="text-gray-400 mb-4 font-bold uppercase text-[10px] tracking-[0.3em]">Gestão Inteligente</p>
-        <p className="hidden sm:block text-sm font-semibold text-gray-600 leading-relaxed mb-8">
-          Organize suas compras de forma simples e inteligente.
-          <br />
-          Com o Shopping Pro, você cria listas, acompanha seus hábitos de consumo e facilita o dia a dia com tudo sob controle.
-        </p>
-        <p className="sm:hidden text-sm font-semibold text-gray-600 leading-relaxed mb-8">
-          Organize suas compras de forma simples e inteligente.
-        </p>
-        
-        <div className="space-y-4">
-          {hasClientId && <div className="flex justify-center" id="googleBtn"></div>}
-          <button onClick={handleDemoLogin} className={`w-full py-5 rounded-2xl font-black transition-all ${hasClientId ? 'text-blue-600 text-sm hover:underline' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-2xl shadow-blue-100'}`}>
-            {hasClientId ? 'Entrar como Convidado' : 'Acessar App'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default function App() {
-  const { settings, updateSettings } = useAppSettings();
-  const [user, setUser] = useState<UserSession | null>(null);
-  const [currentPath, setCurrentPath] = useState<'/' | '/help'>(
-    typeof window !== 'undefined' && window.location.pathname === '/help' ? '/help' : '/'
-  );
-  const [activeTab, setActiveTab] = useState<TabKey>('lista');
-  const [pendingHelpTarget, setPendingHelpTarget] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const params = new URLSearchParams(window.location.search);
-    return params.get('helpTarget');
-  });
-  const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<ShoppingItem[]>([]);
-  const [itemsLoaded, setItemsLoaded] = useState(false);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [historyData, setHistoryData] = useState<{ compras: PurchaseGroup[], stats: DashboardStats } | null>(null);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [resumoSelectedMonth, setResumoSelectedMonth] = useState<string>(() => getResumoMonthInputValue());
-  const [resumoData, setResumoData] = useState<ResumoData | null>(null);
-  const [resumoLoadedPeriodKey, setResumoLoadedPeriodKey] = useState<string | null>(null);
-  const [resumoFetchedAt, setResumoFetchedAt] = useState<number | null>(null);
-  const [resumoStatus, setResumoStatus] = useState<ResumoFetchStatus>('idle');
-  const [resumoError, setResumoError] = useState('');
-  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
-  const [confirmConfig, setConfirmConfig] = useState<ConfirmDialogConfig | null>(null);
-  const [duplicateConfig, setDuplicateConfig] = useState<DuplicateDialogConfig | null>(null);
-  const [aiNoticeConfig, setAiNoticeConfig] = useState<AINoticeConfig | null>(null);
-  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [suggestionsTab, setSuggestionsTab] = useState<SuggestionsTab>('frequentes');
-  const [catFilter, setCatFilter] = useState('todos');
-  const [listQuickFilter, setListQuickFilter] = useState<ListQuickFilter>('todos');
-  const [historySearch, setHistorySearch] = useState('');
-  const [historyFilter, setHistoryFilter] = useState<HistoryQuickFilter>('todos');
-  const [isDebugOpen, setIsDebugOpen] = useState(false);
-  const [isMarketMode, setIsMarketMode] = useState(
-    typeof window !== 'undefined' && sessionStorage.getItem(MARKET_MODE_SESSION_KEY) === 'true'
-  );
-  const [hasSeenOnboarding, setHasSeenOnboarding] = useState(
-    typeof window !== 'undefined' && localStorage.getItem(ONBOARDING_FLAG_KEY) === 'true'
-  );
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
-  const [onboardingStep, setOnboardingStep] = useState(0);
-  const [finalizingPurchase, setFinalizingPurchase] = useState(false);
-  const [togglingItemIds, setTogglingItemIds] = useState<string[]>([]);
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator === 'undefined' ? true : navigator.onLine
-  );
-
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemQtd, setNewItemQtd] = useState(1);
-  const [newItemCat, setNewItemCat] = useState('');
-  const [newItemPrice, setNewItemPrice] = useState('');
-  const [quickAddHistory, setQuickAddHistory] = useState<string[]>(() => {
-    try {
-      const raw = localStorage.getItem(QUICK_ADD_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((value) => typeof value === 'string') : [];
-    } catch {
-      return [];
-    }
-  });
-  const [showNewCategoryForm, setShowNewCategoryForm] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [newCategoryIcon, setNewCategoryIcon] = useState('📦');
-  const [newCategoryColor, setNewCategoryColor] = useState('#9E9E9E');
-  const [favoriteNames, setFavoriteNames] = useState<string[]>([]);
-  const [editingItemId, setEditingItemId] = useState<string | number | null>(null);
-  const quickAddInputRef = useRef<HTMLInputElement | null>(null);
-  const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
-  const duplicateResolverRef = useRef<((value: DuplicateDecision) => void) | null>(null);
-  const onboardingSteps: OnboardingStep[] = [
-    {
-      title: 'Crie seus itens',
-      description: 'Use a adição rápida para montar a lista em poucos cliques.'
-    },
-    {
-      title: 'Use o carrinho',
-      description: 'Marque os itens para mover ao carrinho e acompanhar o progresso da compra.'
-    },
-    {
-      title: 'Veja o histórico',
-      description: 'No histórico você filtra compras antigas e pode recarregar uma compra completa.'
-    },
-    {
-      title: 'Ative a IA',
-      description: 'Abra Configurações, escolha Gemini ou OpenAI e informe a chave para receber sugestões.'
-    }
-  ];
-
-  useEffect(() => {
-    clearRuntimeCachesOnStartup();
-    const savedUser = localStorage.getItem('shopping_user');
-    if (savedUser) setUser(JSON.parse(savedUser));
-    else setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    const onPopState = () => {
-      const nextPath = window.location.pathname === '/help' ? '/help' : '/';
-      setCurrentPath(nextPath);
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, []);
-
-  useEffect(() => { if (user) fetchInitialData(); }, [user]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !pendingHelpTarget) return;
-    const params = new URLSearchParams(window.location.search);
-    if (!params.has('helpTarget')) return;
-    params.delete('helpTarget');
-    const query = params.toString();
-    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash || ''}`;
-    window.history.replaceState({}, '', nextUrl);
-  }, [pendingHelpTarget]);
-
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    if ((activeTab === 'lista' || activeTab === 'carrinho') && !itemsLoaded) {
-      fetchItems();
-    }
-  }, [activeTab, user, itemsLoaded]);
-
-  useEffect(() => {
-    if (!user || loading) return;
-    const alreadySeen = localStorage.getItem(ONBOARDING_FLAG_KEY) === 'true';
-    setHasSeenOnboarding(alreadySeen);
-    if (!alreadySeen) {
-      setOnboardingStep(0);
-      setIsOnboardingOpen(true);
-    }
-  }, [user, loading]);
-
-  useEffect(() => {
-    if (!user || !pendingHelpTarget) return;
-    if (pendingHelpTarget === '/lista' || pendingHelpTarget === '/carrinho' || pendingHelpTarget === '/historico') {
-      setActiveTab(pendingHelpTarget.replace('/', '') as TabKey);
-    }
-    if (pendingHelpTarget === '/configuracoes') {
-      setIsDebugOpen(true);
-    }
-    setPendingHelpTarget(null);
-  }, [user, pendingHelpTarget]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    sessionStorage.setItem(MARKET_MODE_SESSION_KEY, isMarketMode ? 'true' : 'false');
-  }, [isMarketMode]);
-
-  const fetchInitialData = async () => {
-    setLoading(true);
-    try {
-      setItems([]);
-      setItemsLoaded(false);
-      setHistoryData(null);
-      setHistoryLoaded(false);
-      setResumoData(null);
-      setResumoLoadedPeriodKey(null);
-      setResumoFetchedAt(null);
-      setResumoStatus('idle');
-      setResumoError('');
-
-      const bootstrap = await api.bootstrap();
-      if (bootstrap?.spreadsheetId) {
-        localStorage.setItem('shopping_spreadsheet_id', bootstrap.spreadsheetId);
-      }
-      if (bootstrap?.spreadsheetUrl) {
-        localStorage.setItem('shopping_spreadsheet_url', bootstrap.spreadsheetUrl);
-      }
-      if (bootstrap?.created) {
-        showToast('Planilha criada automaticamente para sua conta.', 'success');
-      }
-
-      const cats = await api.getCategories();
-      setCategories(cats);
-      setNewItemCat(cats[0]?.nome || '');
-      if (!cats.length) {
-        showToast('Nenhuma categoria encontrada na planilha.', 'info');
-      }
-    } catch (e: any) {
-      setCategories([]);
-      setItems([]);
-      setItemsLoaded(false);
-      setNewItemCat('');
-      showToast(e?.message || 'Erro ao carregar dados da planilha', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchItems = async () => {
-    setLoading(true);
-    try {
-      const loadedItems = await api.getItems();
-      commitItems(loadedItems);
-      if (editingItemId !== null && !loadedItems.some(i => i.id === editingItemId)) {
-        handleCancelEditItem();
-      }
-      if (!loadedItems.length) {
-        showToast('Nenhum item encontrado na lista atual.', 'info');
-      }
-    } catch (e: any) {
-      setItems([]);
-      setItemsLoaded(false);
-      showToast(e?.message || 'Erro ao carregar itens da planilha', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchHistory = async () => {
-    setLoading(true);
-    try {
-      const data = await api.getHistory();
-      setHistoryData(data);
-      setHistoryLoaded(true);
-    } catch (e: any) {
-      setHistoryData({ compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } });
-      setHistoryLoaded(true);
-      showToast(e?.message || 'Erro ao carregar histórico da planilha', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    setToast({ message, type });
-  };
-
-  const favoriteNameSet = useMemo(() => new Set(favoriteNames), [favoriteNames]);
-
-  const getFavoritesStorageKey = (email: string) =>
-    `${FAVORITES_STORAGE_PREFIX}:${normalizeText(email)}`;
-
-  const isFavoriteName = useCallback(
-    (name: string) => favoriteNameSet.has(normalizeText(name)),
-    [favoriteNameSet]
-  );
-
-  const applyFavoriteFlagsToItems = useCallback(
-    (incomingItems: ShoppingItem[]) =>
-      incomingItems.map((item) => ({
-        ...item,
-        isFavorito: isFavoriteName(item.nome)
-      })),
-    [isFavoriteName]
-  );
-
-  const commitItems = useCallback(
-    (nextItems: ShoppingItem[]) => {
-      setItems(applyFavoriteFlagsToItems(nextItems));
-      setItemsLoaded(true);
-    },
-    [applyFavoriteFlagsToItems]
-  );
-
-  const toggleFavoriteByName = (rawName: string) => {
-    const normalized = normalizeText(rawName);
-    if (!normalized) return;
-    const isCurrentlyFavorite = favoriteNameSet.has(normalized);
-    setFavoriteNames((prev) =>
-      isCurrentlyFavorite
-        ? prev.filter((name) => name !== normalized)
-        : [normalized, ...prev.filter((name) => name !== normalized)]
-    );
-    setItems((prev) =>
-      prev.map((item) =>
-        normalizeText(item.nome) === normalized
-          ? { ...item, isFavorito: !isCurrentlyFavorite }
-          : item
-      )
-    );
-    showToast(
-      isCurrentlyFavorite
-        ? `Favorito removido: ${rawName}`
-        : `Favorito adicionado: ${rawName}`,
-      isCurrentlyFavorite ? 'info' : 'success'
-    );
-  };
-
-  useEffect(() => {
-    if (!user?.email) {
-      setFavoriteNames([]);
-      return;
-    }
-    try {
-      const raw = localStorage.getItem(getFavoritesStorageKey(user.email));
-      const parsed = raw ? JSON.parse(raw) : [];
-      const normalized = Array.isArray(parsed)
-        ? Array.from(
-            new Set(
-              parsed
-                .map((value) => normalizeText(String(value || '')))
-                .filter(Boolean)
-            )
-          )
-        : [];
-      setFavoriteNames(normalized);
-    } catch {
-      setFavoriteNames([]);
-    }
-  }, [user?.email]);
-
-  useEffect(() => {
-    if (!user?.email) return;
-    localStorage.setItem(
-      getFavoritesStorageKey(user.email),
-      JSON.stringify(favoriteNames)
-    );
-  }, [user?.email, favoriteNames]);
-
-  useEffect(() => {
-    setItems((prev) => applyFavoriteFlagsToItems(prev));
-  }, [applyFavoriteFlagsToItems]);
-
-  const parsePriceValue = (value: string) => {
-    const normalized = (value || '').replace(',', '.').trim();
-    const num = parseFloat(normalized);
-    if (!Number.isFinite(num) || num < 0) return 0;
-    return num;
-  };
-
-  const getRuntimeAISettings = (): AppSettings => {
-    const env = (import.meta as any).env || {};
-    const debugProvider = localStorage.getItem('DEBUG_AI_PROVIDER') as AIProvider | null;
-    const debugGeminiKey = localStorage.getItem('DEBUG_API_KEY') || '';
-    const debugOpenAIKey = localStorage.getItem('DEBUG_OPENAI_API_KEY') || '';
-    const debugScriptUrl = localStorage.getItem('DEBUG_APPS_SCRIPT_URL') || '';
-    const debugClientId = localStorage.getItem('DEBUG_CLIENT_ID') || '';
-
-    return {
-      scriptUrl: (debugScriptUrl || settings.scriptUrl || env.VITE_APPS_SCRIPT_URL || '').trim(),
-      googleClientId: (debugClientId || settings.googleClientId || env.VITE_GOOGLE_CLIENT_ID || '').trim(),
-      aiProvider: (debugProvider || settings.aiProvider || 'disabled') as AIProvider,
-      geminiApiKey: (debugGeminiKey || settings.geminiApiKey || '').trim(),
-      openaiApiKey: (debugOpenAIKey || settings.openaiApiKey || '').trim()
-    };
-  };
-
-  const persistQuickAddHistory = (itemsToPersist: string[]) => {
-    localStorage.setItem(QUICK_ADD_HISTORY_KEY, JSON.stringify(itemsToPersist));
-  };
-
-  const addQuickHistoryItem = (name: string) => {
-    const trimmed = (name || '').trim();
-    if (!trimmed) return;
-    setQuickAddHistory((prev) => {
-      const normalized = normalizeText(trimmed);
-      const filtered = prev.filter((entry) => normalizeText(entry) !== normalized);
-      const next = [trimmed, ...filtered].slice(0, 80);
-      persistQuickAddHistory(next);
-      return next;
-    });
-  };
-
-  const inferCategory = (productName: string): Category | null => {
-    if (!categories.length) return null;
-    const normalizedProduct = normalizeText(productName);
-    if (!normalizedProduct) return categories[0];
-
-    const byCategoryName = categories.find((category) => {
-      const categoryName = normalizeText(category.nome);
-      return categoryName && normalizedProduct.includes(categoryName);
-    });
-    if (byCategoryName) return byCategoryName;
-
-    for (const rule of CATEGORY_RULES) {
-      const hitKeyword = rule.keywords.some((keyword) => normalizedProduct.includes(normalizeText(keyword)));
-      if (!hitKeyword) continue;
-      const ruleMatch = categories.find((category) => {
-        const normalizedCategory = normalizeText(category.nome);
-        return rule.hints.some((hint) => normalizedCategory.includes(normalizeText(hint)));
-      });
-      if (ruleMatch) return ruleMatch;
-    }
-
-    return categories[0];
-  };
-
-  const quickAddCatalog = useMemo(() => {
-    const frequency = new Map<string, { name: string; score: number }>();
-
-    const upsert = (rawName: string, score: number) => {
-      const name = (rawName || '').trim();
-      if (!name) return;
-      const normalized = normalizeText(name);
-      if (!normalized) return;
-      const boostedScore = score + (favoriteNameSet.has(normalized) ? 8 : 0);
-      const existing = frequency.get(normalized);
-      if (existing) {
-        existing.score += boostedScore;
-      } else {
-        frequency.set(normalized, { name, score: boostedScore });
-      }
-    };
-
-    quickAddHistory.forEach((name) => upsert(name, 4));
-    items.forEach((item) => upsert(item.nome, item.isFavorito ? 7 : 3));
-    historyData?.compras?.forEach((purchase) => {
-      purchase.itens.forEach((item) => upsert(String(item?.nome || ''), 2));
-    });
-    BASE_ITEM_DICTIONARY.forEach((name) => upsert(name, 1));
-
-    return Array.from(frequency.values())
-      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'pt-BR'))
-      .map((entry) => entry.name);
-  }, [items, historyData, quickAddHistory, favoriteNameSet]);
-
-  const quickAddSuggestions = useMemo(() => {
-    if (!newItemName.trim()) return quickAddCatalog.slice(0, 8);
-    const query = normalizeText(newItemName);
-    if (!query) return quickAddCatalog.slice(0, 8);
-
-    const startsWith = quickAddCatalog.filter((name) => normalizeText(name).startsWith(query));
-    const contains = quickAddCatalog.filter((name) => {
-      const normalized = normalizeText(name);
-      return normalized.includes(query) && !normalized.startsWith(query);
-    });
-
-    return [...startsWith, ...contains].slice(0, 8);
-  }, [newItemName, quickAddCatalog]);
-
-  const inferredCategoryForInput = useMemo(() => {
-    const parsed = parseQuickItemInput(newItemName, newItemQtd);
-    return inferCategory(parsed.nome);
-  }, [newItemName, newItemQtd, categories]);
-
-  const handleItemNameChange = (nextName: string) => {
-    setNewItemName(nextName);
-    const parsed = parseQuickItemInput(nextName, newItemQtd);
-    const inferred = inferCategory(parsed.nome);
-    if (inferred?.nome) {
-      setNewItemCat(inferred.nome);
-    }
-  };
-
-  const requestConfirmation = (config: ConfirmDialogConfig) => {
-    setConfirmConfig({
-      cancelLabel: 'Não, cancelar',
-      confirmLabel: 'Sim, confirmar',
-      intent: 'primary',
-      ...config
-    });
-    return new Promise<boolean>((resolve) => {
-      confirmResolverRef.current = resolve;
-    });
-  };
-
-  const handleConfirmationResult = (confirmed: boolean) => {
-    setConfirmConfig(null);
-    if (confirmResolverRef.current) {
-      const resolve = confirmResolverRef.current;
-      confirmResolverRef.current = null;
-      resolve(confirmed);
-    }
-  };
-
-  const requestDuplicateDecision = (config: DuplicateDialogConfig) => {
-    setDuplicateConfig(config);
-    return new Promise<DuplicateDecision>((resolve) => {
-      duplicateResolverRef.current = resolve;
-    });
-  };
-
-  const handleDuplicateResult = (decision: DuplicateDecision) => {
-    setDuplicateConfig(null);
-    if (duplicateResolverRef.current) {
-      const resolve = duplicateResolverRef.current;
-      duplicateResolverRef.current = null;
-      resolve(decision);
-    }
-  };
-
-  const findDuplicatePendingItem = (name: string) => {
-    const normalizedName = normalizeText(name);
-    if (!normalizedName) return null;
-    return items.find(
-      (item) => item.status === 'pendente' && normalizeText(item.nome) === normalizedName
-    ) || null;
-  };
-
-  const mergeQuantityIntoExistingItem = async (
-    existingItem: ShoppingItem,
-    quantityToAdd: number
-  ) => {
-    const incomingQty = Math.max(1, Number(quantityToAdd) || 1);
-    setLoading(true);
-    try {
-      await api.updateItem(existingItem.id, {
-        nome: existingItem.nome,
-        quantidade: Math.max(1, Number(existingItem.quantidade) || 1) + incomingQty,
-        categoria: existingItem.categoria,
-        precoEstimado: Number(existingItem.precoEstimado) || 0
-      });
-      const refreshed = await api.getItems();
-      commitItems(refreshed);
-      showToast(`Quantidade somada em "${existingItem.nome}".`, 'success');
-      return true;
-    } catch (e: any) {
-      showToast(e?.message || 'Erro ao somar quantidade no item existente', 'error');
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchResumo = async (options?: { force?: boolean; mes?: number; ano?: number }) => {
-    const userEmail = user?.email?.trim();
-    if (!userEmail) return;
-
-    const selectedPeriod = parseResumoMonthInputValue(resumoSelectedMonth);
-    const mes = options?.mes || selectedPeriod.mes;
-    const ano = options?.ano || selectedPeriod.ano;
-    const targetPeriodKey = formatResumoPeriodKey(mes, ano);
-
-    if (
-      !options?.force &&
-      resumoLoadedPeriodKey === targetPeriodKey &&
-      resumoFetchedAt &&
-      Date.now() - resumoFetchedAt <= RESUMO_CACHE_TTL_MS &&
-      resumoData
-    ) {
-      setResumoStatus('success');
-      setResumoError('');
-      return;
-    }
-
-    if (!options?.force) {
-      const cached = readResumoCache(userEmail, mes, ano);
-      if (cached) {
-        setResumoData(cached.data);
-        setResumoLoadedPeriodKey(targetPeriodKey);
-        setResumoFetchedAt(cached.timestamp);
-        setResumoStatus('success');
-        setResumoError('');
-        return;
-      }
-    }
-
-    setResumoStatus('loading');
-    setResumoError('');
-    try {
-      const data = await api.getResumo({ mes, ano });
-      const timestamp = Date.now();
-      writeResumoCache(userEmail, mes, ano, data, timestamp);
-      setResumoData(data);
-      setResumoLoadedPeriodKey(targetPeriodKey);
-      setResumoFetchedAt(timestamp);
-      setResumoStatus('success');
-    } catch (e: any) {
-      const rawMessage = String(e?.message || '');
-      let friendlyMessage = rawMessage || 'Erro ao carregar resumo mensal.';
-      if (/Ação não reconhecida:\s*resumo/i.test(rawMessage)) {
-        friendlyMessage = 'A implantação atual do Apps Script não possui a ação "resumo". Reimplante a versão mais recente do Code.gs.';
-      } else if (/failed to fetch|network|err_failed|conectar|redirecionamento/i.test(rawMessage)) {
-        friendlyMessage = 'Falha de conexão com o Apps Script (comum em rede móvel). Verifique internet, login Google no navegador e URL /exec publicada.';
-      }
-      setResumoData(null);
-      setResumoLoadedPeriodKey(null);
-      setResumoFetchedAt(null);
-      setResumoStatus('error');
-      setResumoError(friendlyMessage);
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (confirmResolverRef.current) {
-        const resolve = confirmResolverRef.current;
-        confirmResolverRef.current = null;
-        resolve(false);
-      }
-      if (duplicateResolverRef.current) {
-        const resolve = duplicateResolverRef.current;
-        duplicateResolverRef.current = null;
-        resolve('cancel');
-      }
-    };
-  }, []);
-
-  const handleLogout = () => {
-    if (user?.email) {
-      clearResumoCacheForUser(user.email);
-    }
-    localStorage.removeItem('shopping_user');
-    setItems([]);
-    setItemsLoaded(false);
-    setHistoryData(null);
-    setHistoryLoaded(false);
-    setResumoData(null);
-    setResumoLoadedPeriodKey(null);
-    setResumoFetchedAt(null);
-    setResumoStatus('idle');
-    setResumoError('');
-    setResumoSelectedMonth(getResumoMonthInputValue());
-    setListQuickFilter('todos');
-    setHistorySearch('');
-    setHistoryFilter('todos');
-    setUser(null);
-  };
-
-  const finishOnboarding = () => {
-    localStorage.setItem(ONBOARDING_FLAG_KEY, 'true');
-    setHasSeenOnboarding(true);
-    setIsOnboardingOpen(false);
-    setOnboardingStep(0);
-  };
-
-  const handleOnboardingNext = () => {
-    if (onboardingStep >= onboardingSteps.length - 1) {
-      finishOnboarding();
-      return;
-    }
-    setOnboardingStep((prev) => prev + 1);
-  };
-
-  const handleOnboardingPrev = () => {
-    setOnboardingStep((prev) => Math.max(0, prev - 1));
-  };
-
-  const handleSaveControlSettings = (next: AppSettings) => {
-    updateSettings(next);
-    showToast('Configurações salvas com sucesso.', 'success');
-  };
-
-  const navigateTo = (path: '/' | '/help') => {
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, '', path);
-    }
-    setCurrentPath(path);
-    window.scrollTo({ top: 0, behavior: 'auto' });
-  };
-
-  const navigateToHelp = () => navigateTo('/help');
-  const navigateToHome = () => navigateTo('/');
-
-  const applyHelpTarget = (deepLink: string) => {
-    if (deepLink === '/lista' || deepLink === '/carrinho' || deepLink === '/historico') {
-      setActiveTab(deepLink.replace('/', '') as TabKey);
-    }
-    if (deepLink === '/configuracoes') {
-      setIsDebugOpen(true);
-    }
-  };
-
-  const handleHelpOpenDeepLink = (deepLink: string) => {
-    applyHelpTarget(deepLink);
-    navigateToHome();
-  };
-
-  const handleAddItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const normalizedName = newItemName.replace(/\s+/g, ' ').trim();
-    const quantity = Math.max(1, Number(newItemQtd) || 1);
-    if (!normalizedName || !newItemCat) {
-      showToast('Informe nome e categoria para salvar na planilha.', 'error');
-      return;
-    }
-
-    const duplicate = findDuplicatePendingItem(normalizedName);
-    if (duplicate) {
-      const decision = await requestDuplicateDecision({
-        itemName: duplicate.nome,
-        existingQuantity: Math.max(1, Number(duplicate.quantidade) || 1),
-        incomingQuantity: quantity
-      });
-
-      if (decision === 'cancel') return;
-      if (decision === 'sum') {
-        const merged = await mergeQuantityIntoExistingItem(duplicate, quantity);
-        if (merged) {
-          setNewItemName('');
-          setNewItemQtd(1);
-          setNewItemPrice('');
-          setNewItemCat(duplicate.categoria || newItemCat);
-          addQuickHistoryItem(normalizedName);
-        }
-        return;
-      }
-    }
-
-    setLoading(true);
-    try {
-      await api.addItem({
-        nome: normalizedName,
-        quantidade: quantity,
-        categoria: newItemCat,
-        precoEstimado: parsePriceValue(newItemPrice)
-      });
-      const updated = await api.getItems();
-      commitItems(updated);
-      setNewItemName(''); setNewItemQtd(1); setNewItemPrice('');
-      addQuickHistoryItem(normalizedName);
-      showToast('Item adicionado!', 'success');
-    } catch (e: any) {
-      showToast(e?.message || 'Erro ao salvar item na planilha', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const addItemWithAutoCategory = async (
-    rawName: string,
-    fallbackQty: number,
-    options?: { resetInput?: boolean; quantityOverride?: number; successMessage?: string }
-  ) => {
-    if (!categories.length) {
-      showToast('Cadastre ao menos uma categoria para usar a adição rápida.', 'error');
-      return false;
-    }
-
-    const parsed = parseQuickItemInput(rawName, fallbackQty);
-    const finalQty = options?.quantityOverride ?? parsed.quantidade;
-    if (!parsed.nome) {
-      showToast('Digite o nome do item para adicionar.', 'error');
-      return false;
-    }
-    const normalizedName = parsed.nome.replace(/\s+/g, ' ').trim();
-    const safeQty = Math.max(1, Number(finalQty) || 1);
-
-    const duplicate = findDuplicatePendingItem(normalizedName);
-    if (duplicate) {
-      const decision = await requestDuplicateDecision({
-        itemName: duplicate.nome,
-        existingQuantity: Math.max(1, Number(duplicate.quantidade) || 1),
-        incomingQuantity: safeQty
-      });
-
-      if (decision === 'cancel') return false;
-      if (decision === 'sum') {
-        const merged = await mergeQuantityIntoExistingItem(duplicate, safeQty);
-        if (merged) {
-          setNewItemCat(duplicate.categoria || newItemCat);
-          addQuickHistoryItem(normalizedName);
-          if (options?.resetInput) {
-            setNewItemName('');
-            setNewItemQtd(1);
-            setNewItemPrice('');
-          }
-        }
-        return merged;
-      }
-    }
-
-    const resolvedCategory = inferCategory(normalizedName) || categories[0];
-    if (!resolvedCategory?.nome) {
-      showToast('Não foi possível inferir a categoria. Selecione uma manualmente.', 'error');
-      return false;
-    }
-
-    setLoading(true);
-    try {
-      await api.addItem({
-        nome: normalizedName,
-        quantidade: safeQty,
-        categoria: resolvedCategory.nome,
-        precoEstimado: parsePriceValue(newItemPrice)
-      });
-      const updated = await api.getItems();
-      commitItems(updated);
-      setNewItemCat(resolvedCategory.nome);
-      addQuickHistoryItem(normalizedName);
-      if (options?.resetInput) {
-        setNewItemName('');
-        setNewItemQtd(1);
-        setNewItemPrice('');
-      }
-      showToast(options?.successMessage || `Item adicionado em ${resolvedCategory.nome}.`, 'success');
-      return true;
-    } catch (e: any) {
-      showToast(e?.message || 'Erro ao salvar item na planilha', 'error');
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickAddItem = async () => {
-    await addItemWithAutoCategory(newItemName, newItemQtd, { resetInput: true });
-  };
-
-  const handleToggleStatus = async (id: string | number) => {
-    const targetId = String(id);
-    if (togglingItemIds.includes(targetId)) return;
-
-    const previousItems = items;
-    const targetItem = previousItems.find((item) => String(item.id) === targetId);
-    if (!targetItem) return;
-
-    const beforeStatus: ShoppingItem['status'] = targetItem.status;
-    const optimisticStatus: ShoppingItem['status'] = beforeStatus === 'comprado' ? 'pendente' : 'comprado';
-    const optimisticItems: ShoppingItem[] = previousItems.map((item): ShoppingItem =>
-      String(item.id) === targetId
-        ? { ...item, status: optimisticStatus }
-        : item
-    );
-
-    setItems(applyFavoriteFlagsToItems(optimisticItems));
-    setItemsLoaded(true);
-    if (editingItemId !== null && String(editingItemId) === targetId) handleCancelEditItem();
-    setTogglingItemIds((prev) => (prev.includes(targetId) ? prev : [...prev, targetId]));
-
-    try {
-      await api.toggleStatus(id);
-      let refreshed = await api.getItems();
-      let afterStatus = refreshed.find(i => String(i.id) === targetId)?.status;
-
-      // Em alguns cenários a primeira leitura pode voltar sem atualização imediata.
-      if (beforeStatus && afterStatus === beforeStatus) {
-        refreshed = await api.getItems();
-        afterStatus = refreshed.find(i => String(i.id) === targetId)?.status;
-      }
-
-      if (beforeStatus && afterStatus === beforeStatus) {
-        throw new Error('Não foi possível mover o item entre lista e carrinho. Tente novamente.');
-      }
-      commitItems(refreshed);
-      if (afterStatus === 'comprado') {
-        showToast('Item movido para o carrinho.', 'success');
-      } else if (afterStatus === 'pendente') {
-        showToast('Item voltou para a lista.', 'info');
-      }
-    } catch (e: any) {
-      setItems(applyFavoriteFlagsToItems(previousItems));
-      showToast(e?.message || 'Erro ao atualizar status no servidor', 'error');
-    } finally {
-      setTogglingItemIds((prev) => prev.filter((itemId) => itemId !== targetId));
-    }
-  };
-
-  const handleRemoveItem = async (id: string | number) => {
-    const item = items.find(i => String(i.id) === String(id));
-    const confirmed = await requestConfirmation({
-      title: 'Confirmar exclusão',
-      message: 'Este item será removido da sua lista atual.',
-      details: item?.nome ? [`Item: ${item.nome}`] : undefined,
-      confirmLabel: 'Sim, remover',
-      cancelLabel: 'Não, cancelar',
-      intent: 'danger'
-    });
-    if (!confirmed) return;
-
-    setLoading(true);
-    try {
-      await api.removeItem(id);
-      const refreshed = await api.getItems();
-      commitItems(refreshed);
-      if (editingItemId !== null && String(editingItemId) === String(id)) handleCancelEditItem();
-      showToast('Item removido com sucesso.', 'success');
-    } catch (e: any) {
-      showToast(e?.message || 'Erro ao remover item na planilha', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const removeItemsInBulk = async (itemIds: Array<string | number>) => {
-    const BATCH_SIZE = 8;
-    let removedCount = 0;
-    let failedCount = 0;
-
-    for (let index = 0; index < itemIds.length; index += BATCH_SIZE) {
-      const batch = itemIds.slice(index, index + BATCH_SIZE);
-      const results = await Promise.allSettled(batch.map((itemId) => api.removeItem(itemId)));
-
-      results.forEach((result) => {
-        if (result.status === 'fulfilled') {
-          removedCount += 1;
-        } else {
-          failedCount += 1;
-        }
-      });
-    }
-
-    return { removedCount, failedCount };
-  };
-
-  const handleBatchClearPendingItems = async () => {
-    const pendingTargets = items.filter(
-      (item) =>
-        item.status === 'pendente' &&
-        (catFilter === 'todos' || item.categoria === catFilter) &&
-        (listQuickFilter === 'todos' || item.isFavorito)
-    );
-    if (!pendingTargets.length) {
-      showToast('Nenhum item pendente para limpar no filtro atual.', 'info');
-      return;
-    }
-
-    const totalPending = items.filter((item) => item.status === 'pendente').length;
-    const isFiltering = catFilter !== 'todos' || listQuickFilter !== 'todos';
-    const targetCount = pendingTargets.length;
-    const countLabel = targetCount === 1 ? '1 item' : `${targetCount} itens`;
-    const confirmed = await requestConfirmation({
-      title: 'Limpar itens em lote',
-      message: isFiltering
-        ? 'Os itens pendentes visíveis no filtro atual serão removidos de uma vez.'
-        : 'Todos os itens pendentes da lista serão removidos de uma vez.',
-      details: [
-        `${countLabel} ${targetCount === 1 ? 'será removido' : 'serão removidos'}.`,
-        ...(isFiltering ? [`Pendentes totais na lista: ${totalPending}`] : [])
-      ],
-      confirmLabel: 'Sim, limpar em lote',
-      cancelLabel: 'Não, cancelar',
-      intent: 'danger'
-    });
-    if (!confirmed) return;
-
-    setLoading(true);
-    try {
-      const { removedCount, failedCount } = await removeItemsInBulk(
-        pendingTargets.map((item) => item.id)
-      );
-      const refreshed = await api.getItems();
-      commitItems(refreshed);
-      if (editingItemId !== null && !refreshed.some((item) => String(item.id) === String(editingItemId))) {
-        handleCancelEditItem();
-      }
-
-      if (failedCount === 0) {
-        showToast(
-          `${removedCount} ${removedCount === 1 ? 'item removido' : 'itens removidos'} em lote.`,
-          'success'
-        );
-      } else {
-        showToast(
-          `${removedCount} removidos e ${failedCount} com falha. Tente novamente para concluir a limpeza.`,
-          'error'
-        );
-      }
-    } catch (e: any) {
-      showToast(e?.message || 'Erro ao limpar itens em lote', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStartEditItem = (item: ShoppingItem) => {
-    setEditingItemId(item.id);
-  };
-
-  const handleCancelEditItem = () => {
-    setEditingItemId(null);
-  };
-
-  const handleSaveEditItem = async (item: EditPanelItem) => {
-    if (!item.nome.trim() || !item.categoria.trim()) {
-      showToast('Informe nome e categoria para editar o item.', 'error');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await api.updateItem(item.id, {
-        nome: item.nome.trim(),
-        quantidade: Number(item.quantidade) || 1,
-        categoria: item.categoria.trim(),
-        precoEstimado: Number(item.precoEstimado) || 0
-      });
-      const refreshed = await api.getItems();
-      commitItems(refreshed);
-      handleCancelEditItem();
-      showToast('Item atualizado!', 'success');
-    } catch (e: any) {
-      showToast(e?.message || 'Erro ao editar item na planilha', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddCategory = async () => {
-    const categoryName = newCategoryName.trim();
-    if (!categoryName) {
-      showToast('Informe o nome da categoria.', 'error');
-      return;
-    }
-    const categoryIcon = (newCategoryIcon || '📦').trim() || '📦';
-    const categoryColor = (newCategoryColor || '#9E9E9E').trim() || '#9E9E9E';
-
-    setLoading(true);
-    try {
-      const added = await api.addCategory({
-        nome: categoryName,
-        icone: categoryIcon,
-        cor: categoryColor
-      });
-
-      const selectedCategoryName = (added?.nome || categoryName).trim();
-      const optimisticCategory: Category = {
-        id: String(added?.id ?? `temp-${Date.now()}`),
-        nome: selectedCategoryName,
-        icone: (added?.icone || categoryIcon).trim(),
-        cor: (added?.cor || categoryColor).trim()
-      };
-
-      setCategories((prev) => {
-        const exists = prev.some((cat) => normalizeText(cat.nome) === normalizeText(selectedCategoryName));
-        if (exists) {
-          return prev.map((cat) =>
-            normalizeText(cat.nome) === normalizeText(selectedCategoryName)
-              ? { ...cat, ...optimisticCategory, id: cat.id }
-              : cat
-          );
-        }
-        return [...prev, optimisticCategory];
-      });
-
-      setNewItemCat(selectedCategoryName);
-      setNewCategoryName('');
-      setNewCategoryIcon('📦');
-      setNewCategoryColor('#9E9E9E');
-      setShowNewCategoryForm(false);
-      showToast('Categoria adicionada!', 'success');
-
-      try {
-        const updatedCats = await api.getCategories();
-        setCategories(updatedCats);
-      } catch {
-        // Keeps optimistic category visible if category refresh fails.
-      }
-    } catch (e: any) {
-      const msg = e?.message || 'Erro ao adicionar categoria';
-      if (msg.includes('Ação não reconhecida')) {
-        showToast('Backend sem suporte a nova categoria. Reimplante o Apps Script atualizado.', 'error');
-      } else {
-        showToast(msg, 'error');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleReloadFromHistory = async (purchaseId: string | number) => {
-    const confirmed = await requestConfirmation({
-      title: 'Carregar compra do histórico',
-      message: 'Os itens desta compra serão adicionados na lista atual como pendentes.',
-      details: [`Compra: ${purchaseId}`],
-      confirmLabel: 'Sim, carregar',
-      cancelLabel: 'Não, cancelar',
-      intent: 'primary'
-    });
-    if (!confirmed) return;
-
-    setLoading(true);
-    try {
-      await api.reloadList(purchaseId);
-      const [updatedItems, updatedHistory] = await Promise.all([
-        api.getItems(),
-        api.getHistory()
-      ]);
-      commitItems(updatedItems);
-      setHistoryData(updatedHistory);
-      setHistoryLoaded(true);
-      setActiveTab('lista');
-      showToast('Itens carregados do histórico para a lista.', 'success');
-    } catch (e: any) {
-      showToast(e?.message || 'Erro ao carregar compra do histórico', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFinalize = async () => {
-    if (finalizingPurchase) return;
-
-    const confirmed = await requestConfirmation({
-      title: 'Finalizar compra',
-      message: 'Os itens marcados no carrinho serão movidos para o histórico.',
-      details: ['Após isso, eles sairão da lista atual.'],
-      confirmLabel: 'Sim, finalizar',
-      cancelLabel: 'Não, cancelar',
-      intent: 'primary'
-    });
-    if (!confirmed) return;
-
-    setFinalizingPurchase(true);
-    try {
-      await api.finalizePurchase();
-      const updated = await api.getItems();
-      commitItems(updated);
-      setHistoryLoaded(false);
-      setHistoryData(null);
-      if (user?.email) {
-        clearResumoCacheForUser(user.email);
-      }
-      setResumoData(null);
-      setResumoLoadedPeriodKey(null);
-      setResumoFetchedAt(null);
-      setResumoStatus('idle');
-      setResumoError('');
-      showToast('Finalizado! Clique em "Carregar Histórico" para atualizar os dados.', 'success');
-      setActiveTab('historico');
-    } catch (e: any) {
-      showToast(e?.message || 'Erro ao finalizar compra na planilha', 'error');
-    } finally {
-      setFinalizingPurchase(false);
-    }
-  };
-
-  const handleGetSuggestions = async () => {
-    const runtimeSettings = getRuntimeAISettings();
-    if (runtimeSettings.aiProvider === 'disabled') {
-      showAINotice({
-        title: 'IA desativada',
-        message: 'Ative um provedor de IA nas Configurações para usar sugestões inteligentes.',
-        action: 'open_settings',
-        actionLabel: 'Abrir configurações'
-      });
-      return;
-    }
-
-    const hasGeminiKey = !!runtimeSettings.geminiApiKey?.trim();
-    const hasOpenAIKey = !!runtimeSettings.openaiApiKey?.trim();
-    if (runtimeSettings.aiProvider === 'gemini' && !hasGeminiKey) {
-      showAINotice({
-        title: 'Chave Gemini ausente',
-        message: 'Configure sua API key do Gemini para continuar usando sugestões de IA.',
-        action: 'open_settings',
-        actionLabel: 'Configurar chave'
-      });
-      return;
-    }
-    if (runtimeSettings.aiProvider === 'openai' && !hasOpenAIKey) {
-      showAINotice({
-        title: 'Chave OpenAI ausente',
-        message: 'Configure sua API key da OpenAI para continuar usando sugestões de IA.',
-        action: 'open_settings',
-        actionLabel: 'Configurar chave'
-      });
-      return;
-    }
-
-    const contextSource = items
-      .filter((item) => item.status === 'pendente')
-      .map((item) => item.nome)
-      .filter(Boolean);
-    const contextItems = contextSource.length ? contextSource : quickAddCatalog.slice(0, 10);
-    const contextInput = Array.from(new Set(contextItems.map((name) => name.trim()).filter(Boolean))).slice(0, 12).join(', ');
-    if (!contextInput) {
-      showToast('Adicione alguns itens na lista para gerar sugestões de IA.', 'info');
-      return;
-    }
-
-    setLoadingSuggestions(true);
-    try {
-      const generated = await generateAISuggestions(contextInput, runtimeSettings);
-      const names = Array.from(new Set(generated.map((item) => item.name.trim()).filter(Boolean))).slice(0, 8);
-      setAiSuggestions(names);
-      setSuggestionsTab('ia');
-      if (!names.length) {
-        showToast('A IA não retornou sugestões para este contexto.', 'info');
-      }
-    } catch (e: any) {
-      const message = String(e?.message || '');
-      if (/failed to fetch|network|ERR_|timeout|conectar/i.test(message)) {
-        showToast('Erro de rede ao consultar IA. Tente novamente.', 'error');
-      } else {
-        showToast(message || 'Erro ao gerar sugestões com IA.', 'error');
-      }
-    } finally {
-      setLoadingSuggestions(false);
-    }
-  };
-
-  const handleAddSuggestion = async (suggestion: string) => {
-    await addItemWithAutoCategory(suggestion, 1, {
-      quantityOverride: 1,
-      successMessage: `${suggestion} adicionado com 1 clique.`
-    });
-  };
-
-  const handleSuggestionsTabChange = (tab: SuggestionsTab) => {
-    setSuggestionsTab(tab);
-    if (tab === 'ultima_compra' && !historyLoaded && !loading) {
-      fetchHistory();
-    }
-  };
-
-  const focusQuickAddInput = () => {
-    setActiveTab('lista');
-    window.requestAnimationFrame(() => {
-      quickAddInputRef.current?.focus();
-      quickAddInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-  };
-
-  const handleResumoMonthChange = (nextMonth: string) => {
-    if (!/^\d{4}-\d{2}$/.test(String(nextMonth || ''))) return;
-    if (nextMonth === resumoSelectedMonth) return;
-    setResumoSelectedMonth(nextMonth);
-    setResumoData(null);
-    setResumoLoadedPeriodKey(null);
-    setResumoFetchedAt(null);
-    setResumoStatus('idle');
-    setResumoError('');
-  };
-
-  const handleRequestResumo = () => {
-    void fetchResumo();
-  };
-
-  const handleResumoRepeatLastPurchase = async () => {
-    if (!resumoLastPurchase?.id) {
-      showToast('Nenhuma compra disponível para repetir.', 'info');
-      return;
-    }
-    await handleReloadFromHistory(resumoLastPurchase.id);
-  };
-
-  const handleResumoGenerateListWithAI = () => {
-    setActiveTab('lista');
-    setSuggestionsTab('ia');
-    window.requestAnimationFrame(() => {
-      void handleGetSuggestions();
-    });
-  };
-
-  const handleResumoCreateNewList = () => {
-    setNewItemName('');
-    setNewItemQtd(1);
-    setSuggestionsTab('frequentes');
-    focusQuickAddInput();
-    showToast('Pronto para criar uma nova lista.', 'info');
-  };
-
-  const handleToggleMarketMode = () => {
-    setIsMarketMode((prev) => {
-      const next = !prev;
-      showToast(next ? 'Modo mercado ativado.' : 'Modo mercado desativado.', 'info');
-      return next;
-    });
-  };
-
-  const showAINotice = (config: AINoticeConfig) => {
-    setAiNoticeConfig(config);
-  };
-
-  const closeAINotice = () => {
-    setAiNoticeConfig(null);
-  };
-
-  const handleAINoticeAction = () => {
-    if (aiNoticeConfig?.action === 'open_settings') {
-      setIsDebugOpen(true);
-    }
-    setAiNoticeConfig(null);
-  };
-
-  const buildShareListText = () => {
-    const pending = items.filter((item) => item.status === 'pendente');
-    const sourceItems = pending.length ? pending : items;
-    if (!sourceItems.length) return '';
-
-    const total = sourceItems.reduce(
-      (acc, item) => acc + (Number(item.precoEstimado) || 0) * (Number(item.quantidade) || 1),
-      0
-    );
-    const lines = [
-      'Lista de compras:',
-      '',
-      ...sourceItems.map((item) => `- ${item.nome} (${Math.max(1, Number(item.quantidade) || 1)})`),
-      '',
-      `Total estimado: R$ ${formatCurrencyBR(total)}`
-    ];
-    return lines.join('\n');
-  };
-
-  const copyTextWithFallback = async (text: string) => {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    textarea.style.pointerEvents = 'none';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    const copied = document.execCommand('copy');
-    document.body.removeChild(textarea);
-    return copied;
-  };
-
-  const handleShareList = async () => {
-    const text = buildShareListText();
-    if (!text) {
-      showToast('Sua lista está vazia para compartilhar.', 'info');
-      return;
-    }
-
-    const sharePayload = {
-      title: 'Lista de compras',
-      text
-    };
-
-    if (navigator.share) {
-      try {
-        await navigator.share(sharePayload);
-        showToast('Lista compartilhada com sucesso.', 'success');
-        return;
-      } catch (e: any) {
-        if (e?.name === 'AbortError') return;
-      }
-    }
-
-    try {
-      const copied = await copyTextWithFallback(text);
-      if (!copied) throw new Error('Falha ao copiar texto');
-      showToast('Lista copiada para compartilhar no WhatsApp.', 'success');
-    } catch {
-      showToast('Não foi possível compartilhar agora. Tente novamente.', 'error');
-    }
-  };
-
-  if (currentPath === '/help') {
-    return <HelpLayout onBack={navigateToHome} onOpenDeepLink={handleHelpOpenDeepLink} />;
-  }
-
-  if (!user && !loading) return (
-    <>
-      <LoginScreen onLogin={setUser} />
-      <button onClick={() => setIsDebugOpen(true)} className="fixed bottom-8 right-8 bg-white/80 p-4 rounded-3xl border border-gray-200 shadow-2xl z-[9999] active:scale-90 flex items-center gap-2">
-         <span className="text-xl">⚙️</span>
-         <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Config</span>
-      </button>
-      <DiagnosticModal
-        isOpen={isDebugOpen}
-        onClose={() => setIsDebugOpen(false)}
-        onRefresh={() => { if (user) fetchInitialData(); }}
-        initialSettings={settings}
-        onSaveSettings={handleSaveControlSettings}
-      />
-    </>
-  );
-
-  const editingItem = editingItemId === null
-    ? null
-    : items.find((it) => String(it.id) === String(editingItemId)) || null;
-  const editingPanelItem: EditPanelItem | null = editingItem
-    ? {
-        id: String(editingItem.id),
-        nome: editingItem.nome || '',
-        quantidade: Math.max(1, Number(editingItem.quantidade) || 1),
-        categoria: editingItem.categoria || categories[0]?.nome || '',
-        precoEstimado: Number(editingItem.precoEstimado) || 0
-      }
-    : null;
-  const pendingItems = items.filter(
-    (i) =>
-      i.status === 'pendente' &&
-      (catFilter === 'todos' || i.categoria === catFilter) &&
-      (listQuickFilter === 'todos' || i.isFavorito)
-  );
-  const boughtItems = items.filter(i => i.status === 'comprado');
-  const cartTotal = boughtItems.reduce((acc, curr) => acc + (curr.precoEstimado * curr.quantidade), 0);
-  const selectedCount = boughtItems.length;
-  const totalCount = items.length;
-  const progressPercent = totalCount > 0 ? Math.round((selectedCount / totalCount) * 100) : 0;
-  const effectiveHistory = historyData || { compras: [], stats: { totalGasto: 0, totalCompras: 0, totalItens: 0, gastoMedio: 0, categoriaFavorita: '' } };
-  const historySearchTerm = normalizeText(historySearch);
-  const now = new Date();
-  const historyPurchases = [...effectiveHistory.compras]
-    .filter((purchase) => {
-      if (!historySearchTerm) return true;
-      return purchase.itens.some((item) =>
-        normalizeText(String(item?.nome || '')).includes(historySearchTerm)
-      );
-    })
-    .filter((purchase) => {
-      if (historyFilter === '7d' || historyFilter === '30d') {
-        const purchaseDate = parsePurchaseDate(String(purchase.data || ''));
-        if (!purchaseDate) return false;
-        const daysBack = historyFilter === '7d' ? 7 : 30;
-        const minDate = new Date(now);
-        minDate.setDate(minDate.getDate() - daysBack);
-        return purchaseDate >= minDate;
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      if (historyFilter === 'maior') return Number(b.total || 0) - Number(a.total || 0);
-      if (historyFilter === 'menor') return Number(a.total || 0) - Number(b.total || 0);
-      return 0;
-    });
-  const frequentSuggestions = quickAddCatalog.slice(0, 8);
-  const latestPurchaseSuggestions = (() => {
-    const latestPurchase = effectiveHistory.compras?.[0];
-    if (!latestPurchase) return [];
-    return Array.from(
-      new Set(
-        latestPurchase.itens
-          .map((item) => String(item?.nome || '').trim())
-          .filter(Boolean)
-      )
-    ).slice(0, 8);
-  })();
-  const resumoSelectedPeriod = parseResumoMonthInputValue(resumoSelectedMonth);
-  const resumoMonthLabel = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(
-    new Date(resumoSelectedPeriod.ano, resumoSelectedPeriod.mes - 1, 1)
-  );
-  const resumoMonthlyOverview = resumoData?.mes || { gastoTotal: 0, totalItens: 0, totalCompras: 0 };
-  const resumoTopCategories = resumoData?.topCategorias || [];
-  const resumoFrequentItems = resumoData?.itensFrequentes || [];
-  const resumoLastPurchase = resumoData?.ultimaCompra || null;
-  const resumoIdle = resumoStatus === 'idle';
-  const resumoLoading = resumoStatus === 'loading';
-  const resumoHasContent =
-    resumoMonthlyOverview.gastoTotal > 0 ||
-    resumoMonthlyOverview.totalItens > 0 ||
-    resumoMonthlyOverview.totalCompras > 0 ||
-    resumoTopCategories.length > 0 ||
-    resumoFrequentItems.length > 0 ||
-    !!resumoLastPurchase;
-  const resumoIsEmpty = resumoStatus === 'success' && !resumoHasContent;
-
-  return (
-    <div className="max-w-4xl mx-auto pb-24 min-h-screen flex flex-col bg-gray-50 overflow-x-hidden">
-      {loading && <LoadingOverlay />}
-      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-      <ConfirmationModal
-        isOpen={!!confirmConfig}
-        config={confirmConfig}
-        onCancel={() => handleConfirmationResult(false)}
-        onConfirm={() => handleConfirmationResult(true)}
-      />
-      <DuplicateItemModal
-        isOpen={!!duplicateConfig}
-        config={duplicateConfig}
-        onSelect={handleDuplicateResult}
-      />
-      <AINoticeModal
-        isOpen={!!aiNoticeConfig}
-        config={aiNoticeConfig}
-        onClose={closeAINotice}
-        onAction={handleAINoticeAction}
-      />
-      <ProcessingModal
-        isOpen={activeTab === 'resumo' && resumoLoading}
-        message="Gerando o resumo mensal. Aguarde alguns segundos."
-      />
-      <OnboardingModal
-        isOpen={isOnboardingOpen && !hasSeenOnboarding}
-        steps={onboardingSteps}
-        stepIndex={onboardingStep}
-        onNext={handleOnboardingNext}
-        onPrev={handleOnboardingPrev}
-        onSkip={finishOnboarding}
-      />
-      <DiagnosticModal
-        isOpen={isDebugOpen}
-        onClose={() => setIsDebugOpen(false)}
-        onRefresh={fetchInitialData}
-        initialSettings={settings}
-        onSaveSettings={handleSaveControlSettings}
-      />
-      <AppHeader
-        user={user}
-        activeTab={activeTab}
-        onChangeTab={setActiveTab}
-        onOpenHelp={navigateToHelp}
-        onOpenSettings={() => setIsDebugOpen(true)}
-        onLogout={handleLogout}
-        listaCount={pendingItems.length}
-        carrinhoCount={boughtItems.length}
-        isOnline={isOnline}
-      />
-
-      <main className="p-3 sm:p-4 flex-1">
-        {activeTab === 'lista' && (
-          <div className="space-y-6 animate-fade-in">
-            <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-white">
-              <QuickAddInput
-                value={newItemName}
-                quantity={newItemQtd}
-                inferredCategoryName={inferredCategoryForInput?.nome || ''}
-                suggestions={quickAddSuggestions}
-                loading={loading}
-                inputRef={quickAddInputRef}
-                onChangeValue={handleItemNameChange}
-                onChangeQuantity={setNewItemQtd}
-                onPickSuggestion={(suggestion) => handleItemNameChange(suggestion)}
-                onSubmit={handleQuickAddItem}
-              />
-
-              <div className="my-6 h-px bg-gray-100" />
-
-              <form onSubmit={handleAddItem} className="space-y-5">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Modo completo (opcional)</label>
-                  <input type="text" placeholder="Ex: Arroz 5kg" className="w-full px-8 py-6 bg-gray-50 rounded-[2rem] focus:ring-4 focus:ring-blue-100 outline-none font-black text-gray-900 text-lg shadow-inner border border-gray-100" value={newItemName} onChange={e => handleItemNameChange(e.target.value)} />
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {state.lists.filter((list) => !list.arquivada).map((list) => {
+                const done = list.itens.filter((i) => i.status === 'comprado').length;
+                const total = list.itens.reduce((sum, i) => sum + i.precoEstimado * i.quantidade, 0);
+                return <button key={list.id} onClick={() => { setState((s) => ({ ...s, activeListId: list.id })); setView('lista'); }} className={`rounded-3xl border p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${list.id === state.activeListId ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}>
+                  <div className="flex items-start justify-between"><Icon>🧾</Icon><span className="text-xs font-semibold text-slate-400">{list.itens.length} itens</span></div>
+                  <h3 className="mt-5 text-lg font-bold">{list.nome}</h3>
+                  <p className="mt-1 min-h-5 text-sm text-slate-500">{list.descricao || 'Sem descrição'}</p>
+                  <div className="mt-5 flex items-center justify-between text-sm"><span className="text-slate-500">{done} comprados</span><strong>{money(total)}</strong></div>
+                </button>;
+              })}
+            </div>
+          </section>
+        )}
+
+        {view === 'lista' && activeList && (
+          <section className="grid gap-5 lg:grid-cols-[1fr_320px]">
+            <div>
+              <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <label className="text-sm font-semibold">Adição rápida</label>
+                <p className="mb-3 text-xs text-slate-500">Digite naturalmente: 2 leite, arroz 5kg, 3 detergentes</p>
+                <div className="flex gap-2">
+                  <input value={quickText} onChange={(e) => setQuickText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addParsedItems()} placeholder="O que está faltando em casa?" className="min-w-0 flex-1 rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-400" />
+                  <button onClick={addParsedItems} className="rounded-2xl bg-blue-600 px-5 font-semibold text-white">Adicionar</button>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Qtd</label>
-                    <input type="number" min={1} className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100" value={newItemQtd} onChange={e => setNewItemQtd(Number(e.target.value))} />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Categoria</label>
-                    <select className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100 appearance-none" value={newItemCat} onChange={e => setNewItemCat(e.target.value)}>
-                      {categories.map(c => <option key={c.id} value={c.nome}>{c.icone} {c.nome}</option>)}
-                    </select>
-                    <button type="button" onClick={() => setShowNewCategoryForm(true)} className="w-full mt-2 bg-blue-50 text-blue-700 border border-blue-200 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-100 transition-all active:scale-95">
-                      Cadastrar Nova Categoria
+              </div>
+
+              <div className="mt-4 flex items-center gap-2">
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar na lista" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-400" />
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {filteredItems.length === 0 && <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500">Sua lista está vazia. Use a adição rápida acima.</div>}
+                {filteredItems.map((item) => {
+                  const history = priceHistory.get(normalize(item.nome)) || [];
+                  const average = history.length ? history.reduce((a, b) => a + b, 0) / history.length : 0;
+                  return <div key={item.id} className={`flex items-center gap-3 rounded-3xl border bg-white p-4 shadow-sm ${item.status === 'comprado' ? 'border-emerald-200 opacity-70' : 'border-slate-200'}`}>
+                    <button onClick={() => toggleItem(item.id)} className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border text-lg ${item.status === 'comprado' ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300'}`}>{item.status === 'comprado' ? '✓' : ''}</button>
+                    <button onClick={() => setEditing({ ...item })} className="min-w-0 flex-1 text-left">
+                      <div className="flex items-center gap-2"><h3 className={`truncate font-semibold ${item.status === 'comprado' ? 'line-through' : ''}`}>{item.nome}</h3>{item.favorito && <span>★</span>}</div>
+                      <p className="mt-1 text-xs text-slate-500">{item.quantidade} un · {item.categoria}{average > 0 ? ` · média histórica ${money(average)}` : ''}</p>
                     </button>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-300 uppercase ml-2 tracking-widest">Preço Unitário</label>
-                    <input type="number" min={0} step="0.01" inputMode="decimal" className="w-full bg-gray-50 px-8 py-5 rounded-[2rem] font-black focus:ring-4 focus:ring-blue-100 outline-none text-gray-900 shadow-inner border border-gray-100" value={newItemPrice} onChange={e => setNewItemPrice(e.target.value)} />
-                  </div>
-                </div>
-                <button type="submit" className="w-full md:w-auto md:px-10 min-h-[48px] bg-blue-600 text-white py-4 md:py-5 rounded-[2rem] font-black text-lg shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 uppercase tracking-widest">Adicionar Agora</button>
-              </form>
+                    <div className="text-right"><strong className="block">{money((item.precoReal ?? item.precoEstimado) * item.quantidade)}</strong><span className="text-xs text-slate-400">{item.precoReal != null ? 'real' : 'estimado'}</span></div>
+                  </div>;
+                })}
+              </div>
             </div>
 
-            <SuggestionsPanel
-              activeTab={suggestionsTab}
-              onChangeTab={handleSuggestionsTabChange}
-              frequentSuggestions={frequentSuggestions}
-              latestPurchaseSuggestions={latestPurchaseSuggestions}
-              aiSuggestions={aiSuggestions}
-              isFavoriteName={isFavoriteName}
-              onToggleFavorite={toggleFavoriteByName}
-              loadingAI={loadingSuggestions}
-              onAskAI={handleGetSuggestions}
-              onAddSuggestion={handleAddSuggestion}
-              onLoadLastPurchase={fetchHistory}
-            />
+            <aside className="space-y-4">
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="font-bold">Sugestões pelo histórico</h3>
+                <p className="mt-1 text-xs text-slate-500">Sem IA externa. O app usa suas compras anteriores.</p>
+                <div className="mt-4 space-y-2">
+                  {frequentSuggestions.length === 0 && <p className="text-sm text-slate-400">Nenhuma sugestão por enquanto.</p>}
+                  {frequentSuggestions.map((suggestion) => <button key={suggestion.name} onClick={() => { setQuickText(suggestion.name); setNotice('Sugestão pronta para adicionar'); }} className="flex w-full items-center justify-between rounded-2xl bg-slate-50 px-3 py-3 text-left text-sm hover:bg-blue-50"><span><strong className="block">{suggestion.name}</strong><small className="text-slate-500">comprado {suggestion.count}x</small></span><span>+</span></button>)}
+                </div>
+              </div>
+              <div className="rounded-3xl bg-slate-900 p-5 text-white">
+                <p className="text-sm text-slate-300">Orçamento da lista</p>
+                <div className="mt-2 flex items-end justify-between"><strong className="text-2xl">{money(state.budget || 0)}</strong><span className={`text-sm font-semibold ${projected <= (state.budget || 0) ? 'text-emerald-400' : 'text-amber-300'}`}>{projected <= (state.budget || 0) ? 'dentro do previsto' : 'acima do limite'}</span></div>
+                <input type="number" value={state.budget || 0} onChange={(e) => setState((s) => ({ ...s, budget: Number(e.target.value) }))} className="mt-4 w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm outline-none" />
+              </div>
+            </aside>
+          </section>
+        )}
 
+        {view === 'mercado' && activeList && (
+          <section className="mx-auto max-w-3xl">
+            <div className="mb-4 flex items-center justify-between"><div><h2 className="text-xl font-bold">Modo mercado</h2><p className="text-sm text-slate-500">Tela simplificada para usar com uma mão durante a compra.</p></div><span className="rounded-full bg-blue-100 px-3 py-1 text-sm font-bold text-blue-700">{bought.length}/{activeItems.length}</span></div>
+            <div className="mb-5 h-3 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} /></div>
+            <div className="space-y-3">
+              {activeItems.map((item) => <div key={item.id} className={`rounded-3xl border p-4 ${item.status === 'comprado' ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => toggleItem(item.id)} className={`h-14 w-14 shrink-0 rounded-2xl text-2xl font-bold ${item.status === 'comprado' ? 'bg-emerald-500 text-white' : 'border-2 border-slate-300 bg-white'}`}>{item.status === 'comprado' ? '✓' : ''}</button>
+                  <div className="min-w-0 flex-1"><h3 className="truncate text-lg font-bold">{item.nome}</h3><p className="text-sm text-slate-500">Quantidade {item.quantidade} · {item.categoria}</p></div>
+                  <label className="w-28"><span className="mb-1 block text-right text-xs text-slate-400">Preço unit.</span><input type="number" step="0.01" value={item.precoReal ?? ''} placeholder={String(item.precoEstimado || 0)} onChange={(e) => updateActiveList((list) => ({ ...list, itens: list.itens.map((i) => i.id === item.id ? { ...i, precoReal: e.target.value === '' ? undefined : Number(e.target.value) } : i) }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-right font-semibold outline-none focus:border-blue-400" /></label>
+                </div>
+              </div>)}
+            </div>
+            <div className="sticky bottom-20 mt-5 rounded-3xl bg-slate-900 p-5 text-white shadow-xl"><div className="flex items-center justify-between"><div><span className="text-sm text-slate-400">Total atual</span><strong className="block text-2xl">{money(actual)}</strong></div><div className="text-right"><span className="text-sm text-slate-400">Projeção final</span><strong className="block text-lg">{money(projected)}</strong></div></div><button onClick={finishPurchase} className="mt-4 w-full rounded-2xl bg-emerald-500 py-3 font-bold text-white">Finalizar compra</button></div>
+          </section>
+        )}
+
+        {view === 'historico' && (
+          <section>
+            <div className="mb-5"><h2 className="text-2xl font-bold">Histórico de compras</h2><p className="text-sm text-slate-500">O histórico alimenta preços médios, frequência e sugestões.</p></div>
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 px-4">
-                 <h2 className="font-black text-gray-900 uppercase text-xs tracking-widest">Sua Lista ({pendingItems.length})</h2>
-                 <div className="flex flex-wrap items-center gap-2">
-                   <button
-                     type="button"
-                     onClick={handleShareList}
-                     className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all active:scale-95"
-                   >
-                     📤 Compartilhar lista
-                   </button>
-                   <button
-                     type="button"
-                     onClick={handleBatchClearPendingItems}
-                     disabled={pendingItems.length === 0 || loading}
-                     className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
-                   >
-                     🧹 Limpar em lote
-                   </button>
-                   <button
-                     type="button"
-                     onClick={() => setListQuickFilter((prev) => (prev === 'favoritos' ? 'todos' : 'favoritos'))}
-                     className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all ${
-                       listQuickFilter === 'favoritos'
-                         ? 'bg-amber-100 text-amber-800 border-amber-300'
-                         : 'bg-white text-gray-500 border-gray-200 hover:border-amber-200 hover:text-amber-700'
-                     }`}
-                   >
-                     ⭐ Favoritos
-                   </button>
-                   <select className="text-[10px] font-black bg-white px-3 py-1.5 rounded-full border border-gray-100 outline-none text-gray-900" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
-                      <option value="todos">Todas Categorias</option>
-                      {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-                   </select>
-                 </div>
-              </div>
-              {pendingItems.length === 0 && (
-                <EmptyStateCard
-                  icon="📝"
-                  title="Sua lista está vazia"
-                  message="Adicione itens para começar sua compra."
-                  ctaLabel="Adicionar primeiro item"
-                  onCta={focusQuickAddInput}
-                />
-              )}
-              {pendingItems.map(it => {
-                const isToggling = togglingItemIds.includes(String(it.id));
-                return (
-                  <SwipeablePendingItemCard
-                    key={it.id}
-                    item={it}
-                    isToggling={isToggling}
-                    onMoveToCart={handleToggleStatus}
-                    onOpenEdit={handleStartEditItem}
-                    onRemove={handleRemoveItem}
-                    onToggleFavorite={toggleFavoriteByName}
-                  />
-                );
-              })}
+              {state.purchases.map((purchase) => <details key={purchase.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><summary className="cursor-pointer list-none"><div className="flex items-center justify-between gap-4"><div><strong className="block">{purchase.listaNome}</strong><span className="text-sm text-slate-500">{new Date(purchase.data).toLocaleDateString('pt-BR')} · {purchase.mercado || 'Mercado não informado'} · {purchase.itens.length} itens</span></div><strong className="text-lg">{money(purchase.total)}</strong></div></summary><div className="mt-4 border-t border-slate-100 pt-3">{purchase.itens.map((item, index) => <div key={`${item.nome}-${index}`} className="flex justify-between py-2 text-sm"><span>{item.quantidade}x {item.nome}</span><span>{money(item.total)}</span></div>)}</div></details>)}
             </div>
-          </div>
+          </section>
         )}
 
-        {activeTab === 'carrinho' && (
-          <div className={`animate-fade-in ${isMarketMode ? 'space-y-4 pb-28' : 'space-y-6'}`}>
-            <div className="flex items-center justify-between gap-3 px-1">
-              <h2 className="text-[10px] font-black uppercase tracking-widest text-gray-500">Operação de compra</h2>
-              <button
-                type="button"
-                onClick={handleToggleMarketMode}
-                className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all active:scale-95 ${
-                  isMarketMode
-                    ? 'bg-green-600 text-white border-green-600 shadow-lg shadow-green-100'
-                    : 'bg-white text-green-700 border-green-200 hover:bg-green-50'
-                }`}
-              >
-                🛒 {isMarketMode ? 'Modo mercado ativo' : 'Modo mercado'}
-              </button>
+        {view === 'insights' && (
+          <section>
+            <div className="mb-5"><h2 className="text-2xl font-bold">Resumo de consumo</h2><p className="text-sm text-slate-500">Indicadores calculados exclusivamente com os dados armazenados neste navegador.</p></div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Metric label="Total histórico" value={money(state.purchases.reduce((sum, p) => sum + p.total, 0))} helper={`${state.purchases.length} compras`} />
+              <Metric label="Ticket médio" value={money(state.purchases.length ? state.purchases.reduce((sum, p) => sum + p.total, 0) / state.purchases.length : 0)} helper="por compra" />
+              <Metric label="Lista atual" value={money(projected)} helper={`${pending.length} pendentes`} />
+              <Metric label="Orçamento" value={money(state.budget || 0)} helper={projected <= (state.budget || 0) ? 'projeção dentro do limite' : 'atenção ao limite'} />
             </div>
-
-            <div className={`bg-green-600 p-6 sm:p-12 rounded-[2.5rem] sm:rounded-[4rem] text-white shadow-2xl shadow-green-100 border-4 border-white ${
-              isMarketMode ? 'sticky top-[72px] sm:top-[88px] z-20' : ''
-            }`}>
-              <p className="text-green-100 text-[10px] font-black uppercase tracking-[0.3em] opacity-80">Subtotal Selecionado</p>
-              <h2 className="text-4xl sm:text-6xl font-black mt-3 tracking-tighter break-words">R$ {cartTotal.toFixed(2)}</h2>
-              <div className="mt-6">
-                <p className="text-[11px] font-black uppercase tracking-widest text-green-100 mb-2">
-                  {selectedCount} de {totalCount} itens selecionados
-                </p>
-                <div className="w-full h-3 rounded-full bg-white/25 overflow-hidden">
-                  <div
-                    className="h-full bg-white transition-all duration-300"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-              </div>
+            <div className="mt-5 grid gap-5 lg:grid-cols-2">
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="font-bold">Produtos com histórico de preço</h3><div className="mt-4 space-y-3">{[...priceHistory.entries()].slice(0, 8).map(([key, prices]) => { const latest = prices[0]; const avg = prices.reduce((a, b) => a + b, 0) / prices.length; return <div key={key} className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm"><span className="capitalize">{key}</span><span className="text-right"><strong className="block">{money(latest)}</strong><small className="text-slate-500">média {money(avg)}</small></span></div>; })}</div></div>
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="font-bold">Leitura da lista atual</h3><div className="mt-4 space-y-3"><Insight title="Projeção" text={`A compra deve terminar perto de ${money(projected)} com os preços informados.`} /><Insight title="Diferença para o orçamento" text={`${projected <= (state.budget || 0) ? 'Ainda há' : 'A projeção ultrapassa em'} ${money(Math.abs((state.budget || 0) - projected))}.`} /><Insight title="Sugestões automáticas" text={`${frequentSuggestions.length} produto(s) recorrente(s) ainda não estão na lista atual.`} /></div></div>
             </div>
-            
-            <div className={isMarketMode ? 'space-y-3 overscroll-contain' : 'space-y-4'}>
-              {boughtItems.length === 0 && (
-                <EmptyStateCard
-                  icon="🛒"
-                  title="Carrinho vazio"
-                  message="Marque itens da lista para acompanhar o que já pegou no mercado."
-                  ctaLabel="Voltar para lista"
-                  onCta={() => setActiveTab('lista')}
-                />
-              )}
-              {boughtItems.map(it => {
-                const isToggling = togglingItemIds.includes(String(it.id));
-                return (
-                  <div
-                    key={it.id}
-                    role={isMarketMode ? 'button' : undefined}
-                    tabIndex={isMarketMode ? 0 : undefined}
-                    onClick={isMarketMode ? () => handleToggleStatus(it.id) : undefined}
-                    onKeyDown={isMarketMode ? (e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleToggleStatus(it.id);
-                      }
-                    } : undefined}
-                    className={`bg-white border border-gray-100 flex items-center shadow-sm transition-all ${
-                      isMarketMode
-                        ? 'p-5 rounded-[2rem] gap-4 min-h-[88px] cursor-pointer active:scale-[0.995]'
-                        : 'p-6 rounded-[2.5rem] gap-5 group hover:scale-[1.01]'
-                    }`}
-                  >
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleToggleStatus(it.id);
-                      }}
-                      disabled={isToggling}
-                      className={`${isMarketMode ? 'w-16 h-16 rounded-[1.1rem]' : 'w-14 h-14 rounded-[1.3rem]'} bg-green-500 flex items-center justify-center text-white shadow-lg active:scale-90 transition-all disabled:opacity-70`}
-                      aria-label="Desmarcar item do carrinho"
-                    >
-                      {isToggling ? (
-                        <span className="w-5 h-5 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                      )}
-                    </button>
-                    <div className="flex-1">
-                      <div className={`flex items-center justify-between gap-3 ${isMarketMode ? 'mb-1' : ''}`}>
-                        <h3 className={`font-bold text-gray-400 line-through ${isMarketMode ? 'text-2xl tracking-tight' : 'text-lg'}`}>{it.nome}</h3>
-                        {!isMarketMode && (
-                          <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${isToggling ? 'text-amber-700 bg-amber-100' : 'text-green-700 bg-green-100'}`}>
-                            {isToggling ? 'Atualizando' : 'Selecionado'}
-                          </span>
-                        )}
-                      </div>
-                      <div className={`grid gap-2 mt-2 ${isMarketMode ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
-                        <p className={`font-black ${isMarketMode ? 'text-sm text-green-800' : 'text-xs text-green-700 uppercase tracking-widest'}`}>
-                          Qtd: {it.quantidade}
-                        </p>
-                        {!isMarketMode && (
-                          <p className="text-xs font-black text-gray-600 uppercase tracking-widest">
-                            Preço: R$ {Number(it.precoEstimado || 0).toFixed(2)}
-                          </p>
-                        )}
-                        <p className={`font-black text-gray-900 ${isMarketMode ? 'text-xl text-right' : 'text-lg sm:text-right'}`}>
-                          R$ {(it.precoEstimado * it.quantidade).toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {boughtItems.length > 0 && (
-              <button
-                onClick={handleFinalize}
-                disabled={finalizingPurchase}
-                className={`w-full min-h-[48px] bg-green-600 text-white py-6 md:py-5 rounded-[3rem] font-black text-xl md:text-2xl hover:bg-green-700 shadow-2xl shadow-green-100 transition-all border-b-8 border-green-800 tracking-tighter uppercase active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3 ${
-                  isMarketMode ? 'sticky bottom-20 z-30' : 'md:w-auto md:px-12 md:self-end'
-                }`}
-              >
-                {finalizingPurchase && <span className="w-5 h-5 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />}
-                {finalizingPurchase ? 'SALVANDO...' : 'FINALIZAR E SALVAR'}
-              </button>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'resumo' && (
-          <div className="space-y-4 sm:space-y-5 animate-fade-in">
-            <section className="bg-white border border-gray-100 rounded-[2rem] p-4 sm:p-5 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Periodo do resumo</p>
-                  <p className="text-sm font-semibold text-gray-700 mt-1 capitalize">{resumoMonthLabel}</p>
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleRequestResumo}
-                    disabled={resumoLoading}
-                    className="min-h-[44px] px-4 rounded-xl bg-emerald-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {resumoLoading ? 'Processando...' : 'Solicitar resumo'}
-                  </button>
-                  <label htmlFor="resumo-month" className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                    Mes
-                  </label>
-                  <input
-                    id="resumo-month"
-                    type="month"
-                    value={resumoSelectedMonth}
-                    max="2099-12"
-                    onChange={(event) => handleResumoMonthChange(event.target.value)}
-                    className="h-11 px-3 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-900 outline-none focus:ring-4 focus:ring-emerald-100"
-                  />
-                </div>
-              </div>
-            </section>
-            {resumoIdle ? (
-              <EmptyStateCard
-                icon="📈"
-                title="Resumo aguardando solicitação"
-                message={'Selecione o mês e clique em "Solicitar resumo" para carregar os indicadores.'}
-                ctaLabel="Solicitar resumo"
-                onCta={handleRequestResumo}
-              />
-            ) : resumoStatus === 'error' ? (
-              <EmptyStateCard
-                icon="⚠️"
-                title="Falha ao carregar o resumo"
-                message={resumoError || 'Não foi possível carregar os dados de resumo agora.'}
-                ctaLabel="Tentar novamente"
-                onCta={handleRequestResumo}
-              />
-            ) : resumoIsEmpty ? (
-              <EmptyStateCard
-                icon="📊"
-                title="Resumo sem dados no período"
-                message="Finalize compras no período selecionado para visualizar os indicadores automáticos."
-                ctaLabel="Ir para lista"
-                onCta={() => setActiveTab('lista')}
-              />
-            ) : (
-              <ResumoPage
-                loading={resumoLoading}
-                monthLabel={resumoMonthLabel}
-                monthlyOverview={resumoMonthlyOverview}
-                topCategories={resumoTopCategories}
-                frequentItems={resumoFrequentItems}
-                lastPurchase={resumoLastPurchase}
-                showAIInsights={FEATURE_AI_INSIGHTS_ENABLED}
-                onRepeatLastPurchase={handleResumoRepeatLastPurchase}
-                onGenerateListWithAI={handleResumoGenerateListWithAI}
-                onCreateNewList={handleResumoCreateNewList}
-              />
-            )}
-          </div>
-        )}
-
-        {activeTab === 'historico' && (
-          <div className="space-y-6 animate-fade-in">
-            {!historyLoaded && (
-              <EmptyStateCard
-                icon="📚"
-                title="Histórico ainda não carregado"
-                message="Carregue o histórico para ver compras anteriores e reaproveitar listas."
-                ctaLabel="Carregar histórico"
-                onCta={fetchHistory}
-              />
-            )}
-
-            {historyLoaded && (
-              <>
-             <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Buscar no histórico</label>
-                  <input
-                    type="text"
-                    placeholder="Buscar no histórico..."
-                    value={historySearch}
-                    onChange={(e) => setHistorySearch(e.target.value)}
-                    className="w-full bg-gray-50 border border-gray-200 px-4 py-3 rounded-2xl text-sm font-semibold text-gray-900 outline-none focus:ring-4 focus:ring-purple-100"
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { id: '7d', label: 'Últimos 7 dias' },
-                    { id: '30d', label: 'Últimos 30 dias' },
-                    { id: 'maior', label: 'Maior valor' },
-                    { id: 'menor', label: 'Menor valor' }
-                  ].map((filter) => (
-                    <button
-                      key={filter.id}
-                      type="button"
-                      onClick={() => setHistoryFilter((prev) => (prev === filter.id ? 'todos' : filter.id as HistoryQuickFilter))}
-                      className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
-                        historyFilter === filter.id
-                          ? 'bg-purple-600 text-white border-purple-600'
-                          : 'bg-white text-gray-600 border-gray-200 hover:border-purple-200 hover:text-purple-700'
-                      }`}
-                    >
-                      {filter.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-purple-600 p-8 rounded-[3rem] text-white shadow-2xl">
-                  <p className="text-purple-100 text-[9px] font-black uppercase tracking-widest opacity-70">Gasto Acumulado</p>
-                  <h2 className="text-3xl font-black mt-2 tracking-tighter">R$ {Number(effectiveHistory.stats.totalGasto).toFixed(2)}</h2>
-                </div>
-                <div className="bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm flex flex-col justify-center">
-                  <p className="text-gray-400 text-[9px] font-black uppercase tracking-widest">Categoria Top</p>
-                  <h2 className="text-xl font-black mt-2 text-gray-900 truncate tracking-tight">{effectiveHistory.stats.categoriaFavorita || 'Sem Dados'}</h2>
-                </div>
-             </div>
-             
-             {historyPurchases.length === 0 && (
-                <EmptyStateCard
-                  icon="📭"
-                  title="Nenhuma compra encontrada"
-                  message="Ajuste os filtros ou carregue novas compras para visualizar o histórico."
-                  ctaLabel="Limpar filtros"
-                  onCta={() => {
-                    setHistorySearch('');
-                    setHistoryFilter('todos');
-                  }}
-                />
-             )}
-             
-             {historyPurchases.map(p => (
-               <div key={p.id} className="bg-white rounded-[3rem] border border-gray-100 overflow-hidden shadow-xl group hover:border-purple-200 transition-all">
-                 <div className="p-8 bg-gray-50 flex justify-between items-center border-b border-gray-100 text-gray-900">
-                   <div>
-                     <span className="font-black block text-lg tracking-tighter">{p.data}</span>
-                     <span className="text-[9px] font-black text-purple-500 uppercase tracking-widest">ID: {p.id}</span>
-                   </div>
-                   <div className="text-right">
-                     <span className="font-black text-purple-600 text-2xl block tracking-tighter">R$ {Number(p.total).toFixed(2)}</span>
-                     <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">{p.itens.length} ITENS</span>
-                   </div>
-                 </div>
-                 <div className="p-8 space-y-4">
-                   {p.itens.map((it, idx) => (
-                     <div key={idx} className="flex justify-between items-center text-sm">
-                       <div className="flex items-center gap-3">
-                         <div className="w-2 h-2 rounded-full bg-purple-200"></div>
-                         <span className="font-bold text-gray-700">{it.quantidade}x {it.nome}</span>
-                       </div>
-                       <span className="font-black text-gray-400 text-xs tracking-widest">R$ {Number(it.total).toFixed(2)}</span>
-                     </div>
-                   ))}
-                   <button onClick={() => handleReloadFromHistory(p.id)} className="w-full mt-2 bg-purple-600 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-purple-700 transition-all active:scale-95 shadow-sm">
-                     🔁 Recarregar esta compra
-                   </button>
-                 </div>
-               </div>
-             ))}
-             </>
-            )}
-          </div>
+          </section>
         )}
       </main>
 
-      <EditItemPanel
-        item={editingPanelItem}
-        open={editingItemId !== null}
-        onClose={handleCancelEditItem}
-        onSave={handleSaveEditItem}
-        onDelete={(id) => handleRemoveItem(id)}
-      />
+      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto grid max-w-3xl grid-cols-5 px-2 py-2">
+          {navigation.map((item) => <button key={item.key} onClick={() => setView(item.key)} className={`flex flex-col items-center gap-1 rounded-2xl px-2 py-2 text-xs font-semibold ${view === item.key ? 'bg-blue-50 text-blue-700' : 'text-slate-500'}`}><span className="text-lg">{item.icon}</span>{item.label}</button>)}
+        </div>
+      </nav>
 
-      <CategoryPanel
-        open={showNewCategoryForm}
-        loading={loading}
-        name={newCategoryName}
-        icon={newCategoryIcon}
-        color={newCategoryColor}
-        onClose={() => setShowNewCategoryForm(false)}
-        onSave={handleAddCategory}
-        onNameChange={setNewCategoryName}
-        onIconChange={setNewCategoryIcon}
-        onColorChange={setNewCategoryColor}
-      />
+      {showNewList && <Modal onClose={() => setShowNewList(false)}><h3 className="text-xl font-bold">Nova lista</h3><p className="mt-1 text-sm text-slate-500">Crie listas independentes para contextos diferentes.</p><input autoFocus value={newListName} onChange={(e) => setNewListName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createList()} placeholder="Ex.: Compras de setembro" className="mt-5 w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-400" /><div className="mt-4 flex justify-end gap-2"><button onClick={() => setShowNewList(false)} className="rounded-xl px-4 py-2">Cancelar</button><button onClick={createList} className="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white">Criar lista</button></div></Modal>}
 
-      <footer className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-2xl border-t px-4 py-4 sm:hidden flex justify-around items-center z-50 rounded-t-[2.25rem] shadow-2xl">
-          {(['lista', 'carrinho', 'historico', 'resumo'] as TabKey[]).map(t => (
-            <button key={t} onClick={() => setActiveTab(t)} className={`flex flex-col items-center gap-2 relative transition-all ${activeTab === t ? 'scale-110' : 'grayscale opacity-40 hover:opacity-100'}`}>
-              <div className="text-3xl">{t === 'lista' ? '📋' : t === 'carrinho' ? '🛒' : t === 'historico' ? '📅' : '📊'}</div>
-              <span className={`text-[9px] font-black uppercase tracking-tighter ${
-                activeTab === t
-                  ? (t === 'lista' ? 'text-blue-600' : t === 'carrinho' ? 'text-green-600' : t === 'historico' ? 'text-purple-600' : 'text-amber-600')
-                  : 'text-gray-500'
-              }`}>{t}</span>
-              {t === 'carrinho' && boughtItems.length > 0 && (
-                <span className="absolute -top-1 -right-2 bg-red-600 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-lg">{boughtItems.length}</span>
-              )}
-            </button>
-          ))}
-      </footer>
+      {editing && <Modal onClose={() => setEditing(null)}><div className="flex items-center justify-between"><h3 className="text-xl font-bold">Editar item</h3><button onClick={() => setEditing(null)} className="text-slate-400">✕</button></div><div className="mt-5 grid gap-4"><Field label="Nome"><input value={editing.nome} onChange={(e) => setEditing({ ...editing, nome: e.target.value, categoria: detectCategory(e.target.value) })} className="input" /></Field><div className="grid grid-cols-2 gap-3"><Field label="Quantidade"><input type="number" min="1" value={editing.quantidade} onChange={(e) => setEditing({ ...editing, quantidade: Math.max(1, Number(e.target.value)) })} className="input" /></Field><Field label="Preço estimado"><input type="number" step="0.01" value={editing.precoEstimado} onChange={(e) => setEditing({ ...editing, precoEstimado: Number(e.target.value) })} className="input" /></Field></div><Field label="Categoria"><select value={editing.categoria} onChange={(e) => setEditing({ ...editing, categoria: e.target.value })} className="input">{categories.map((category) => <option key={category}>{category}</option>)}</select></Field><label className="flex items-center gap-3 rounded-2xl bg-slate-50 p-3 text-sm"><input type="checkbox" checked={editing.favorito} onChange={(e) => setEditing({ ...editing, favorito: e.target.checked })} /> Favorito</label></div><div className="mt-5 flex items-center justify-between"><button onClick={() => removeItem(editing.id)} className="rounded-xl px-3 py-2 text-sm font-semibold text-red-600">Remover</button><button onClick={saveEditing} className="rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white">Salvar alterações</button></div></Modal>}
+
+      {notice && <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-xl">{notice}</div>}
+
+      <style>{`.input{width:100%;border:1px solid rgb(226 232 240);border-radius:1rem;padding:.75rem 1rem;outline:none}.input:focus{border-color:rgb(96 165 250)}`}</style>
     </div>
   );
 }
 
+function Metric({ label, value, helper }: { label: string; value: string; helper: string }) {
+  return <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">{label}</p><strong className="mt-2 block text-2xl">{value}</strong><span className="mt-1 block text-xs text-slate-400">{helper}</span></div>;
+}
+
+function Insight({ title, text }: { title: string; text: string }) {
+  return <div className="rounded-2xl bg-slate-50 p-4"><strong className="text-sm">{title}</strong><p className="mt-1 text-sm text-slate-600">{text}</p></div>;
+}
+
+function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:p-4" onMouseDown={onClose}><div onMouseDown={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl">{children}</div></div>;
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label><span className="mb-1.5 block text-sm font-semibold">{label}</span>{children}</label>;
+}
+
+export default App;
