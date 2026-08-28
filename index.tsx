@@ -12,3 +12,8 @@ ReactDOM.createRoot(rootElement).render(
     <App />
   </React.StrictMode>
 );
+
+// Necessário pro Chrome/Android considerar o app "instalável" e disparar o beforeinstallprompt.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { void navigator.serviceWorker.register('/sw.js'); });
+}
