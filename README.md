@@ -1,4 +1,4 @@
-# 7Compras
+# 7Mercado
 
 Aplicação mobile-first da Consult Services para planejamento, execução e inteligência de compras.
 

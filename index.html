@@ -3,15 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#2563eb">
+    <meta name="theme-color" content="#003b73">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="7Compras">
-    <title>7Compras | Consult Services</title>
+    <meta name="apple-mobile-web-app-title" content="7Mercado">
+    <title>7Mercado | Consult Services</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32-v2.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-v2.png">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Tokens do design system Consult Services (mesma paleta/raio/sombra do
+        // 7Eventos e 7Commander) para que o 7Mercado seja reconhecível como
+        // produto da mesma plataforma.
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#e1f4fc', 100: '#cdecfa', 200: '#a8def6', 300: '#7cd0f2', 400: '#3dbdec',
+                            500: '#00aeef', 600: '#003b73', 700: '#002f5c', 800: '#002952', 900: '#001a35',
+                        },
+                        success: { 50: '#e1f5ee', 500: '#1d9e75', 700: '#0f6e56' },
+                        warning: { 50: '#faeeda', 500: '#c17f1a', 700: '#854f0b' },
+                        danger: { 50: '#fcebeb', 500: '#c0453d', 700: '#a32d2d' },
+                        info: { 50: '#e1f4fc', 500: '#00aeef', 700: '#003b73' },
+                    },
+                    borderRadius: { sm: '10px', md: '16px', lg: '22px' },
+                    boxShadow: {
+                        sm: '0 1px 2px rgba(0, 41, 82, 0.06)',
+                        md: '0 16px 32px -24px rgba(0, 59, 115, 0.32)',
+                    },
+                },
+            },
+        };
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }

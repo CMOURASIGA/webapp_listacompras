@@ -1,13 +1,13 @@
 {
-  "name": "Shopping Pro",
-  "short_name": "Shopping Pro",
-  "description": "Lista de compras inteligente com carrinho, historico e sugestoes de IA.",
+  "name": "7Mercado",
+  "short_name": "7Mercado",
+  "description": "Planejamento de compras, historico de precos e inteligencia de consumo. Consult Services.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#2563eb",
-  "theme_color": "#2563eb",
+  "background_color": "#003b73",
+  "theme_color": "#003b73",
   "icons": [
     {
       "src": "/icons/icon-192-v2.png",
