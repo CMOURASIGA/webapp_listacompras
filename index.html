@@ -9,8 +9,8 @@
     <meta name="apple-mobile-web-app-title" content="7Mercado">
     <title>7Mercado | Consult Services</title>
     <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32-v2.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-v2.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32-v3.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-v3.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         // Tokens do design system Consult Services (mesma paleta/raio/sombra do
@@ -60,9 +60,11 @@
         
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        /* list-none do Tailwind não cobre o marcador nativo do <summary> no Safari/Chrome */
+        summary::-webkit-details-marker { display: none; }
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100 min-h-screen">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
 </body>
