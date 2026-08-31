@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Sparkles } from 'lucide-react';
 import type { AppData, ShoppingList, ShoppingListItem } from '../../types/domain';
 import { shoppingRepository } from '../../repositories/shoppingRepository';
 import { friendlyError } from '../../lib/errors';
 import { isImportedHistoryList, parseNaturalItems } from '../../services/shoppingIntelligence';
+import { fetchAiSuggestions } from '../../services/aiSuggestions';
 import { Card, EmptyState, Pill } from '../../components/ui';
 import { categoryIcon } from '../../lib/categoryIcon';
 
@@ -11,6 +12,7 @@ export function ListsPage({ userId, data, activeList, selectList, reload, startS
   const [showNew, setShowNew] = useState(false); const [name, setName] = useState(''); const [description, setDescription] = useState(''); const [budget, setBudget] = useState(''); const [quick, setQuick] = useState(''); const [busy, setBusy] = useState(false); const [busyItem, setBusyItem] = useState('');
   const [newItem, setNewItem] = useState(false); const [itemName, setItemName] = useState(''); const [itemQty, setItemQty] = useState('1'); const [itemPrice, setItemPrice] = useState('');
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
+  const [suggestions, setSuggestions] = useState<string[]>([]); const [suggesting, setSuggesting] = useState(false);
   const items = useMemo(() => data.items.filter(i => i.list_id === activeList?.id && i.status !== 'removed'), [data.items, activeList]);
   const ownLists = useMemo(() => data.lists.filter(l => !isImportedHistoryList(l)), [data.lists]);
   // Histórico importado (uma lista por compra antiga migrada) some do carrossel principal
@@ -50,11 +52,24 @@ export function ListsPage({ userId, data, activeList, selectList, reload, startS
     try { setBusyItem(item.id); await shoppingRepository.updateItem(item.id, { estimated_price: value }); await reload(); } catch (e) { notify(friendlyError(e)); } finally { setBusyItem(''); }
   };
   const remove = async (id: string) => { try { setBusyItem(id); await shoppingRepository.removeItem(id); await reload(); } catch (e) { notify(friendlyError(e)); } finally { setBusyItem(''); } };
+  const requestSuggestions = async () => {
+    try { setSuggesting(true); setSuggestions(await fetchAiSuggestions(items.filter(i => i.status === 'pending').map(i => i.name_snapshot))); }
+    catch (e) { notify(e instanceof Error ? e.message : 'Não foi possível gerar sugestões agora.'); } finally { setSuggesting(false); }
+  };
+  const addSuggestion = async (suggestionName: string) => {
+    if (!activeList) return;
+    try {
+      await shoppingRepository.addItems(userId, activeList.id, [{ name_snapshot: suggestionName, quantity: 1, category_id: null, estimated_price: null, product_id: null }]);
+      setSuggestions(current => current.filter(s => s !== suggestionName));
+      await reload(); notify(`${suggestionName} adicionado`);
+    } catch (e) { notify(friendlyError(e)); }
+  };
   return <div className="space-y-4"><div className="flex items-start justify-between"><div><h2 className="text-2xl font-bold">Minhas listas</h2><p className="text-sm text-slate-500 dark:text-slate-400">Planeje diferentes tipos de compra.</p></div><button onClick={() => setShowNew(true)} className="rounded-2xl bg-brand-600 px-4 py-2.5 font-bold text-white">+ Nova</button></div>
     {ownLists.length ? <div className="flex gap-2 overflow-x-auto pb-1">{ownLists.map(list => <button key={list.id} onClick={() => selectList(list.id)} className={`min-w-[190px] rounded-2xl border p-3 text-left ${activeList?.id === list.id ? 'border-brand-400 bg-brand-50 dark:border-brand-500/50 dark:bg-brand-500/10' : 'bg-white dark:bg-slate-800 dark:border-slate-700'}`}><div className="flex items-center justify-between gap-2"><strong className="truncate">{list.name}</strong><Pill tone={activeList?.id === list.id ? 'brand' : 'neutral'} className="shrink-0">{data.items.filter(i => i.list_id === list.id && i.status === 'pending').length}</Pill></div><p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{list.description || 'Sem descrição'}</p></button>)}</div> : <EmptyState title="Nenhuma lista criada" description="Toque em “+ Nova”, dê um nome (ex.: Compra do mês) e comece a adicionar itens."/>}
     {recentHistoryMonths.length > 0 && <details className="group rounded-2xl border border-slate-200 p-3 dark:border-slate-700"><summary className="flex cursor-pointer list-none items-center gap-2"><span className="min-w-0 flex-1 text-sm font-semibold text-slate-600 dark:text-slate-300">Histórico importado</span><ChevronDown size={16} className="shrink-0 text-slate-400 transition-transform group-open:rotate-180"/></summary><div className="mt-3 space-y-2 border-t border-slate-200 pt-2 dark:border-slate-700">{recentHistoryMonths.map(([key, group]) => <details key={key} className="rounded-xl bg-slate-50 p-2.5 dark:bg-slate-700/50"><summary className="flex cursor-pointer list-none items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-semibold">{group.label}</span><span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">{group.lists.length} lista(s)</span></summary><div className="mt-2 flex flex-wrap gap-2">{group.lists.map(list => <button key={list.id} onClick={() => selectList(list.id)} className={`rounded-xl border px-3 py-2 text-left text-sm ${activeList?.id === list.id ? 'border-brand-400 bg-brand-50 dark:border-brand-500/50 dark:bg-brand-500/10' : 'border-slate-200 bg-white dark:border-slate-600 dark:bg-slate-800'}`}>{list.name}</button>)}</div></details>)}</div></details>}
     {activeList && <><Card><div className="flex items-center justify-between gap-3"><div className="min-w-0"><p className="text-xs text-slate-500 dark:text-slate-400">Lista ativa</p><h3 className="truncate text-xl font-bold">{activeList.name}</h3></div><button onClick={startShopping} disabled={!items.some(i => i.status === 'pending')} className="shrink-0 rounded-2xl bg-brand-600 px-4 py-2.5 font-bold text-white disabled:opacity-40">Comprar</button></div></Card>
       <Card><h3 className="font-bold">Adição rápida</h3><p className="mb-3 text-sm text-slate-500 dark:text-slate-400">Ex.: 2 leite, arroz 5kg, 3 detergentes — depois ajuste quantidade e preço na lista abaixo.</p><div className="flex gap-2"><input value={quick} onChange={e => setQuick(e.target.value)} onKeyDown={e => e.key === 'Enter' && void addQuick()} className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900" placeholder="Digite os produtos"/><button disabled={busy} onClick={() => void addQuick()} className="rounded-2xl bg-brand-600 px-4 font-bold text-white">Adicionar</button></div><button onClick={() => setNewItem(true)} className="mt-3 w-full rounded-2xl border border-dashed border-slate-300 py-2.5 text-sm font-semibold text-slate-600 dark:border-slate-600 dark:text-slate-300">+ Adicionar item com quantidade e preço</button></Card>
+      <Card><div className="flex items-center justify-between gap-3"><div className="min-w-0"><h3 className="flex items-center gap-1.5 font-bold"><Sparkles size={17} className="text-brand-600 dark:text-brand-400"/>Sugestões com IA</h3><p className="text-xs text-slate-500 dark:text-slate-400">A IA olha sua lista e sugere o que pode estar faltando.</p></div><button disabled={suggesting} onClick={() => void requestSuggestions()} className="shrink-0 rounded-2xl border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700 disabled:opacity-50 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">{suggesting ? 'Pensando...' : 'Sugerir'}</button></div>{suggestions.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{suggestions.map(s => <button key={s} onClick={() => void addSuggestion(s)} className="rounded-full border border-brand-200 bg-white px-3 py-1.5 text-sm font-semibold text-brand-700 dark:border-brand-500/30 dark:bg-slate-800 dark:text-brand-300">+ {s}</button>)}</div>}</Card>
       <Card><div className="mb-3 flex justify-between"><h3 className="font-bold">Itens</h3><span className="text-sm text-slate-500 dark:text-slate-400">{items.filter(i => i.status === 'pending').length} pendentes</span></div><div className="space-y-2">{items.length ? items.map(item => {
         const pending = item.status === 'pending';
         const priceValue = priceDrafts[item.id] ?? (item.estimated_price != null ? String(item.estimated_price) : '');
