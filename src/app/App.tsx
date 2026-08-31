@@ -12,7 +12,7 @@ import { PricesPage } from '../features/prices/PricesPage';
 import { InsightsPage } from '../features/insights/InsightsPage';
 import { SettingsDrawer } from '../features/settings/SettingsDrawer';
 import { ErrorState, LoadingState } from '../components/ui';
-import { pantryPredictions, priceHistory } from '../services/shoppingIntelligence';
+import { isImportedHistoryList, pantryPredictions, priceHistory } from '../services/shoppingIntelligence';
 
 type View = 'home' | 'lists' | 'shopping' | 'prices' | 'insights';
 export default function App() {
@@ -26,9 +26,12 @@ export default function App() {
     setNotice('Seu navegador não permite instalar por aqui. Tente pelo Chrome ou Safari.');
   };
   useEffect(() => { void supabase.auth.getSession().then(({ data: result }) => { setSession(result.session); setAuthLoading(false); }); const { data: listener } = supabase.auth.onAuthStateChange((_event, current) => { setSession(current); setAuthLoading(false); }); return () => listener.subscription.unsubscribe(); }, []);
-  useEffect(() => { if (!activeListId && data.lists[0]) setActiveListId(data.lists[0].id); }, [data.lists, activeListId]);
+  useEffect(() => { const fallback = data.lists.find(list => !isImportedHistoryList(list)) || data.lists[0]; if (!activeListId && fallback) setActiveListId(fallback.id); }, [data.lists, activeListId]);
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(''), 3000); return () => window.clearTimeout(timer); }, [notice]);
-  const activeList = data.lists.find(list => list.id === activeListId) || data.lists[0]; const history = useMemo(() => priceHistory(data.purchases, data.markets), [data.purchases, data.markets]); const pantry = useMemo(() => pantryPredictions(history, data.purchases), [history, data.purchases]);
+  // Prioriza uma lista de planejamento real; listas de histórico importado (uma por
+  // compra antiga migrada) só entram como último recurso, pra não virar "lista ativa"
+  // por padrão sem o usuário ter escolhido.
+  const activeList = data.lists.find(list => list.id === activeListId) || data.lists.find(list => !isImportedHistoryList(list)) || data.lists[0]; const history = useMemo(() => priceHistory(data.purchases, data.markets), [data.purchases, data.markets]); const pantry = useMemo(() => pantryPredictions(history, data.purchases), [history, data.purchases]);
   if (!hasSupabaseConfig) return <main className="grid min-h-screen place-items-center bg-slate-50 p-5 dark:bg-slate-900"><div className="max-w-lg rounded-3xl border bg-white p-6 text-center dark:border-slate-700 dark:bg-slate-800"><h1 className="text-xl font-bold dark:text-slate-100">Configuração pendente</h1><p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Defina VITE_SUPABASE_URL e VITE_SUPABASE_KEY no ambiente da branch develop.</p></div></main>;
   if (authLoading) return <LoadingState/>; if (!user) return <AuthPage/>;
   const nav: Array<[View, string, typeof Home]> = [['home', 'Início', Home], ['lists', 'Listas', ListChecks], ['shopping', 'Comprar', ShoppingCart], ['prices', 'Preços', Tags], ['insights', 'Resumo', BarChart3]];

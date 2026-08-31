@@ -1,8 +1,10 @@
-import type { Market, PantryPrediction, PurchaseItem, ShoppingListItem, HistorySummary } from '../types/domain';
+import type { Market, PantryPrediction, PurchaseItem, ShoppingList, ShoppingListItem, HistorySummary } from '../types/domain';
 
 const DAY = 86_400_000;
 export const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 export const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+/** Listas criadas pela migra\u00e7\u00e3o de hist\u00f3rico (uma por compra antiga importada), n\u00e3o listas de planejamento reais. */
+export const isImportedHistoryList = (list: ShoppingList) => (list.description || '').startsWith('Hist\u00f3rico importado');
 export const confidence = (count: number): 'Baixa' | 'Média' | 'Alta' => count >= 6 ? 'Alta' : count >= 3 ? 'Média' : 'Baixa';
 
 export function priceHistory(purchases: PurchaseItem[], markets: Market[]): HistorySummary[] {
