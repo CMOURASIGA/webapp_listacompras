@@ -74,7 +74,7 @@ export default async function handler(req: Request) {
   const token = cookieHeader.split(';').map(x => x.trim()).find(x => x.startsWith('shopping_session='))?.slice('shopping_session='.length) || '';
   const [expiryStr, signature, ...rest] = token.split('.');
   const expiry = Number(expiryStr);
-  const valid = rest.length === 0 && /^\\d{13}$/.test(expiryStr || '') && expiry > Date.now() &&
+  const valid = rest.length === 0 && /^\d{13}$/.test(expiryStr || '') && expiry > Date.now() &&
     !!signature && equal(signature, await hmac(expiryStr));
   if (!valid) return respond({ error: 'Sessão expirada. Entre novamente.' }, 401);
   if (action === 'session') return respond({ data: { email: ownerEmail, name: loginUser } });
