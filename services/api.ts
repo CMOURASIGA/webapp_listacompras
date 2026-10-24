@@ -109,23 +109,9 @@ async function requestJson(url: string, credentials: RequestCredentials, redirec
 }
 
 async function callBackend(action: string, data: any = null) {
-  const manualUrl = localStorage.getItem('DEBUG_APPS_SCRIPT_URL')?.trim();
-  const manualKey = localStorage.getItem('DEBUG_API_KEY')?.trim();
-
-  const forceDirect = String((import.meta as any).env?.VITE_FORCE_DIRECT_SCRIPT || '').toLowerCase() === 'true';
-  const scriptBase = manualUrl || (import.meta as any).env?.VITE_APPS_SCRIPT_URL || FALLBACK_SCRIPT_URL;
   const proxyBase = new URL('/api', window.location.origin).toString();
-
-  const savedUser = localStorage.getItem('shopping_user');
-  const user: UserSession | null = savedUser ? JSON.parse(savedUser) : null;
-
-  const proxyUrl = buildRequestUrl(proxyBase, action, data, user, { manualUrl, manualKey, includeOverrides: true });
-  const directUrl = buildRequestUrl(scriptBase, action, data, user);
-
+  const proxyUrl = buildRequestUrl(proxyBase, action, data, null);
   try {
-    if (forceDirect) {
-      return await requestJson(directUrl.toString(), 'omit', 'follow');
-    }
     // A API de mesma origem é a única rota padrão. Não ocultar seu erro
     // com uma segunda tentativa cross-origin que falha por CORS.
     const proxyData = await requestJson(proxyUrl.toString(), 'same-origin', 'follow');
