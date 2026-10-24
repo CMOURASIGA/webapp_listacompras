@@ -11,13 +11,11 @@ export default async function handler(req: Request) {
   const url = new URL(req.url);
   const action = url.searchParams.get('action');
   const payloadStr = url.searchParams.get('payload');
-  const userEmail = url.searchParams.get('userEmail');
-  
-  const overrideUrl = url.searchParams.get('override_url');
-  const overrideKey = url.searchParams.get('override_key');
 
-  const SCRIPT_URL_RAW = overrideUrl || process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL || FALLBACK_SCRIPT_URL;
-  const EFFECTIVE_API_KEY = overrideKey || process.env.API_KEY;
+  
+  // Configurações sensíveis devem ser controladas somente pelo servidor.
+  const SCRIPT_URL_RAW = process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL || FALLBACK_SCRIPT_URL;
+  const EFFECTIVE_API_KEY = process.env.API_KEY;
 
   const jsonResponse = (data: any, status = 200) => new Response(JSON.stringify(data), {
     status,
@@ -32,7 +30,56 @@ export default async function handler(req: Request) {
     }
   });
 
-  if (req.method === 'OPTIONS') return jsonResponse({}, 200);
+
+  const loginUser = (process.env.SHOPPING_LOGIN_USER || 'admin').trim();
+  const loginPassword = process.env.SHOPPING_LOGIN_PASSWORD || '';
+  const ownerEmail = (process.env.SHOPPING_OWNER_EMAIL || '').trim().toLowerCase();
+  const sessionSecret = process.env.SHOPPING_SESSION_SECRET || '';
+  const ready = loginPassword.length >= 12 && !!ownerEmail && sessionSecret.length >= 32;
+  const encoder = new TextEncoder();
+  const toHex = (bytes: Uint8Array) => Array.from(bytes).map(x => x.toString(16).padStart(2, '0')).join('');
+  const hmac = async (message: string) => {
+    const key = await crypto.subtle.importKey('raw', encoder.encode(sessionSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return toHex(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(message))));
+  };
+  const equal = (a: string, b: string) => {
+    const x = encoder.encode(a), y = encoder.encode(b);
+    let diff = x.length ^ y.length;
+    for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] || 0) ^ (y[i] || 0);
+    return diff === 0;
+  };
+  const cookie = (value: string, maxAge: number) =>
+    'shopping_session=' + value + '; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=' + maxAge;
+  const respond = (data: any, status = 200, setCookie?: string) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+    if (setCookie) headers['Set-Cookie'] = setCookie;
+    return new Response(JSON.stringify(data), { status, headers });
+  };
+  if (req.method === 'OPTIONS') return respond({}, 200);
+  if (action === 'health') return respond({ ok: true, configured: ready });
+  if (!ready) return respond({ error: 'Login não configurado no servidor. Configure SHOPPING_LOGIN_PASSWORD, SHOPPING_OWNER_EMAIL e SHOPPING_SESSION_SECRET.' }, 503);
+  if (action === 'login') {
+    if (req.method !== 'POST') return respond({ error: 'Método não permitido' }, 405);
+    let body: any;
+    try { body = await req.json(); } catch { return respond({ error: 'Dados inválidos' }, 400); }
+    if (!equal(String(body?.username || ''), loginUser) || !equal(String(body?.password || ''), loginPassword))
+      return respond({ error: 'Usuário ou senha inválidos' }, 401);
+    const expiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    const payload = String(expiry);
+    const signature = await hmac(payload);
+    return respond({ data: { email: ownerEmail, name: loginUser } }, 200, cookie(payload + '.' + signature, 604800));
+  }
+  if (action === 'logout') return respond({ data: { ok: true } }, 200, cookie('', 0));
+  const cookieHeader = req.headers.get('cookie') || '';
+  const token = cookieHeader.split(';').map(x => x.trim()).find(x => x.startsWith('shopping_session='))?.slice('shopping_session='.length) || '';
+  const [expiryStr, signature, ...rest] = token.split('.');
+  const expiry = Number(expiryStr);
+  const valid = rest.length === 0 && /^\d{13}$/.test(expiryStr || '') && expiry > Date.now() &&
+    !!signature && equal(signature, await hmac(expiryStr));
+  if (!valid) return respond({ error: 'Sessão expirada. Entre novamente.' }, 401);
+  if (action === 'session') return respond({ data: { email: ownerEmail, name: loginUser } });
+  if (req.method !== 'GET') return respond({ error: 'Método não permitido' }, 405);
+
 
   // IA Sugestões (Gemini)
   if (action === 'getSmartSuggestions') {
@@ -65,8 +112,13 @@ export default async function handler(req: Request) {
 
     const targetUrl = new URL(sanitizedUrl);
     if (action) targetUrl.searchParams.set('action', action);
-    if (payloadStr) targetUrl.searchParams.set('payload', payloadStr);
-    if (userEmail) targetUrl.searchParams.set('userEmail', userEmail);
+    if (payloadStr) {
+      const parsed = JSON.parse(payloadStr);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) parsed.userEmail = ownerEmail;
+      targetUrl.searchParams.set('payload', JSON.stringify(parsed));
+    }
+    // Identidade derivada da sessão, nunca de parâmetro enviado pelo navegador.
+    targetUrl.searchParams.set('userEmail', ownerEmail);
     
     // Cache buster para garantir dados novos
     targetUrl.searchParams.set('_t', Date.now().toString());

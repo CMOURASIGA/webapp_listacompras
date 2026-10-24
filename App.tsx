@@ -1212,74 +1212,39 @@ const DiagnosticModal = ({
 // --- Telas Principais ---
 
 const LoginScreen = ({ onLogin }: { onLogin: (user: UserSession) => void }) => {
-  const [hasClientId, setHasClientId] = useState(true);
-
-  useEffect(() => {
-    const manualId = localStorage.getItem('DEBUG_CLIENT_ID');
-    const clientId = manualId || (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID;
-    
-    if (!clientId || clientId.includes("CLIENT_ID_AQUI")) {
-      setHasClientId(false);
-      return;
-    }
-
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
     try {
-      // @ts-ignore
-      google.accounts.id.initialize({
-        client_id: clientId,
-        callback: (response: any) => {
-          const payload = JSON.parse(atob(response.credential.split('.')[1]));
-          const user: UserSession = {
-            email: payload.email,
-            name: payload.name,
-            picture: payload.picture
-          };
-          localStorage.setItem('shopping_user', JSON.stringify(user));
-          onLogin(user);
-        }
+      const response = await fetch('/api?action=login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin', body: JSON.stringify({ username, password })
       });
-      // @ts-ignore
-      google.accounts.id.renderButton(
-        document.getElementById("googleBtn"),
-        { theme: "outline", size: "large", width: 280, text: "signin_with", shape: "pill" }
-      );
-    } catch (e) {
-      setHasClientId(false);
-    }
-  }, [onLogin]);
-
-  const handleDemoLogin = () => {
-    const demoUser = {
-      email: 'convidado@exemplo.com',
-      name: 'Convidado',
-      picture: 'https://ui-avatars.com/api/?name=Convidado&background=0D8ABC&color=fff'
-    };
-    localStorage.setItem('shopping_user', JSON.stringify(demoUser));
-    onLogin(demoUser);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result?.error || 'Falha ao autenticar');
+      onLogin(result.data);
+    } catch (e: any) {
+      setError(e?.message || 'Não foi possível conectar ao servidor de autenticação.');
+    } finally { setBusy(false); }
   };
-
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="bg-white p-8 sm:p-12 rounded-[3rem] sm:rounded-[4rem] shadow-2xl shadow-blue-200 w-full max-w-md text-center border border-white">
-        <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center text-white font-black text-5xl shadow-xl mx-auto mb-8 border-4 border-white">L</div>
-        <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tighter">Shopping Pro</h1>
-        <p className="text-gray-400 mb-4 font-bold uppercase text-[10px] tracking-[0.3em]">Gestão Inteligente</p>
-        <p className="hidden sm:block text-sm font-semibold text-gray-600 leading-relaxed mb-8">
-          Organize suas compras de forma simples e inteligente.
-          <br />
-          Com o Shopping Pro, você cria listas, acompanha seus hábitos de consumo e facilita o dia a dia com tudo sob controle.
-        </p>
-        <p className="sm:hidden text-sm font-semibold text-gray-600 leading-relaxed mb-8">
-          Organize suas compras de forma simples e inteligente.
-        </p>
-        
-        <div className="space-y-4">
-          {hasClientId && <div className="flex justify-center" id="googleBtn"></div>}
-          <button onClick={handleDemoLogin} className={`w-full py-5 rounded-2xl font-black transition-all ${hasClientId ? 'text-blue-600 text-sm hover:underline' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-2xl shadow-blue-100'}`}>
-            {hasClientId ? 'Entrar como Convidado' : 'Acessar App'}
-          </button>
-        </div>
-      </div>
+      <form onSubmit={submit} className="bg-white p-8 sm:p-12 rounded-[3rem] shadow-xl w-full max-w-md text-center border border-gray-100">
+        <div className="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-6 text-white font-black text-5xl flex items-center justify-center">L</div>
+        <h1 className="text-3xl font-black text-gray-900 mb-2">Shopping Pro</h1>
+        <p className="text-sm text-gray-500 mb-8">Entre com seu usuário e senha</p>
+        <label htmlFor="shopping-username" className="block text-left text-sm font-bold mb-2">Usuário</label>
+        <input id="shopping-username" autoComplete="username" required value={username} onChange={e => setUsername(e.target.value)} className="w-full p-4 mb-4 rounded-xl border border-gray-300" />
+        <label htmlFor="shopping-password" className="block text-left text-sm font-bold mb-2">Senha</label>
+        <input id="shopping-password" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full p-4 mb-4 rounded-xl border border-gray-300" />
+        {error && <p role="alert" className="text-red-700 text-sm mb-4">{error}</p>}
+        <button type="submit" disabled={busy} className="w-full py-4 rounded-xl bg-blue-600 text-white font-black disabled:opacity-50">{busy ? 'Autenticando...' : 'Entrar'}</button>
+      </form>
     </div>
   );
 };
@@ -1378,9 +1343,13 @@ export default function App() {
 
   useEffect(() => {
     clearRuntimeCachesOnStartup();
-    const savedUser = localStorage.getItem('shopping_user');
-    if (savedUser) setUser(JSON.parse(savedUser));
-    else setLoading(false);
+    // O navegador não é fonte de identidade; valida a sessão no servidor.
+    localStorage.removeItem('shopping_user');
+    fetch('/api?action=session', { credentials: 'same-origin', cache: 'no-store' })
+      .then(async response => response.ok ? (await response.json()).data : null)
+      .then(session => { if (session) setUser(session); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
