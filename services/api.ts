@@ -63,9 +63,7 @@ async function requestJson(url: string, credentials: RequestCredentials, redirec
       redirect
     });
   } catch (err: any) {
-    throw new Error(
-      "Falha ao conectar com o Google Apps Script. Verifique a implantação /exec e se sua conta Google está autenticada no navegador."
-    );
+    throw new Error(`Não foi possível alcançar a API (${err?.message || 'falha de conexão'}). Verifique o serviço, não apenas a internet do aparelho.`);
   }
 
   if (response.status >= 300 && response.status < 400) {
@@ -125,29 +123,16 @@ async function callBackend(action: string, data: any = null) {
   const directUrl = buildRequestUrl(scriptBase, action, data, user);
 
   try {
-    if (!forceDirect) {
-      // Preferimos /api em qualquer ambiente para manter mesma-origem e evitar
-      // diferenças entre navegadores desktop/mobile no redirect cross-origin.
-      try {
-        const proxyData = await requestJson(proxyUrl.toString(), 'same-origin', 'follow');
-        if (
-          action !== 'getSmartSuggestions' &&
-          proxyData &&
-          typeof proxyData === 'object' &&
-          Object.prototype.hasOwnProperty.call(proxyData, 'sucesso') &&
-          (proxyData as any).sucesso === false
-        ) {
-          throw new Error((proxyData as any).error || `Falha no proxy para ${action}.`);
-        }
-        return proxyData;
-      } catch (proxyError) {
-        // Fallback: caso /api esteja indisponível no host, tenta o /exec direto.
-      }
+    if (forceDirect) {
+      return await requestJson(directUrl.toString(), 'omit', 'follow');
     }
-
-    // Para Apps Script com acesso anônimo (ACAO=*), não usar credentials 'include'.
-    // No endpoint direto (/exec), seguimos redirect até o /macros/echo para obter JSON.
-    return await requestJson(directUrl.toString(), 'omit', 'follow');
+    // A API de mesma origem é a única rota padrão. Não ocultar seu erro
+    // com uma segunda tentativa cross-origin que falha por CORS.
+    const proxyData = await requestJson(proxyUrl.toString(), 'same-origin', 'follow');
+    if (action !== 'getSmartSuggestions' && proxyData && typeof proxyData === 'object' && (proxyData as any).sucesso === false) {
+      throw new Error((proxyData as any).error || `Falha no proxy para ${action}.`);
+    }
+    return proxyData;
   } catch (error: any) {
     console.error(`Erro na ação ${action}:`, error);
     throw error;
