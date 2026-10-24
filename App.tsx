@@ -679,7 +679,7 @@ const ConfirmationModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[10002] flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-white w-full max-w-xl rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white w-full max-w-xl rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-8 rounded-[1.5rem] sm:rounded-[2.5rem]" onClick={(e) => e.stopPropagation()}>
         <div className="w-14 h-14 rounded-2xl border border-gray-200 mx-auto mb-5 flex items-center justify-center text-gray-500">
           <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
         </div>
@@ -718,7 +718,7 @@ const DuplicateItemModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[10003] flex items-center justify-center p-4" onClick={() => onSelect('cancel')}>
-      <div className="bg-white w-full max-w-xl rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white w-full max-w-xl rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-8 rounded-[1.5rem] sm:rounded-[2.5rem]" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-2xl font-black text-gray-900 tracking-tight mb-3">Item duplicado</h3>
         <p className="text-sm font-medium text-gray-600 leading-relaxed">
           Este item já está na lista. Deseja somar a quantidade?
@@ -770,7 +770,7 @@ const AINoticeModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/45 backdrop-blur-sm z-[10005] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white w-full max-w-lg rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white w-full max-w-lg rounded-[2.5rem] border border-gray-200 shadow-2xl p-8 text-center max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-8 rounded-[1.5rem] sm:rounded-[2.5rem]" onClick={(e) => e.stopPropagation()}>
         <div className="w-14 h-14 rounded-2xl border border-amber-200 bg-amber-50 mx-auto mb-5 flex items-center justify-center text-amber-600">
           <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
         </div>
@@ -889,7 +889,7 @@ const AppHeader = ({
   carrinhoCount: number;
   isOnline: boolean;
 }) => {
-  const statusText = isOnline ? 'Sincronizado' : 'Offline';
+  const statusText = isOnline ? 'Conectado' : 'Offline';
   const statusClass = isOnline ? 'text-emerald-600' : 'text-amber-600';
   const tabsContainerRef = useRef<HTMLElement | null>(null);
   const [showTabsOverflowHint, setShowTabsOverflowHint] = useState(false);
