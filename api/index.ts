@@ -13,11 +13,9 @@ export default async function handler(req: Request) {
   const payloadStr = url.searchParams.get('payload');
   const userEmail = url.searchParams.get('userEmail');
   
-  const overrideUrl = url.searchParams.get('override_url');
-  const overrideKey = url.searchParams.get('override_key');
-
-  const SCRIPT_URL_RAW = overrideUrl || process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL || FALLBACK_SCRIPT_URL;
-  const EFFECTIVE_API_KEY = overrideKey || process.env.API_KEY;
+  // Configurações sensíveis devem ser controladas somente pelo servidor.
+  const SCRIPT_URL_RAW = process.env.APPS_SCRIPT_URL || process.env.VITE_APPS_SCRIPT_URL || FALLBACK_SCRIPT_URL;
+  const EFFECTIVE_API_KEY = process.env.API_KEY;
 
   const jsonResponse = (data: any, status = 200) => new Response(JSON.stringify(data), {
     status,
