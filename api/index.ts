@@ -112,8 +112,13 @@ export default async function handler(req: Request) {
 
     const targetUrl = new URL(sanitizedUrl);
     if (action) targetUrl.searchParams.set('action', action);
-    if (payloadStr) targetUrl.searchParams.set('payload', payloadStr);
-    // Identidade derivada da sessão, nunca de parâmetro enviado pelo navegador.\n    targetUrl.searchParams.set('userEmail', ownerEmail);
+    if (payloadStr) {
+      const parsed = JSON.parse(payloadStr);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) parsed.userEmail = ownerEmail;
+      targetUrl.searchParams.set('payload', JSON.stringify(parsed));
+    }
+    // Identidade derivada da sessão, nunca de parâmetro enviado pelo navegador.
+    targetUrl.searchParams.set('userEmail', ownerEmail);
     
     // Cache buster para garantir dados novos
     targetUrl.searchParams.set('_t', Date.now().toString());
